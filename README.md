@@ -97,16 +97,6 @@ python demos/qcc_contract_review_demo.py "<合同文件完整路径>" --reuse-pr
 pip install -r requirements-demo.txt
 ```
 
-ArkClaw/Linux 不需要下载 Playwright 自带 Chromium。先安装或使用系统已有 Chromium/Chrome，并把路径交给 demo：
-
-```bash
-python -m pip install -r requirements-demo.txt
-export QCC_BROWSER_EXECUTABLE=/usr/bin/chromium
-# 也可使用 /usr/bin/chromium-browser、/usr/bin/google-chrome 或 /usr/bin/google-chrome-stable
-```
-
-脚本会优先使用 `QCC_BROWSER_EXECUTABLE`，其次自动查找 Linux 常见路径和 `PATH`。如果 ArkClaw 以 root 运行，脚本会自动给 Chromium 加 `--no-sandbox` 和 `--disable-dev-shm-usage`。
-
 运行：
 
 ```powershell

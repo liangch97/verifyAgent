@@ -127,13 +127,6 @@ Session reuse notes:
 - Do not include `.browser-profiles/` in portable packages or cloud handoff artifacts.
 - To clear the saved login state, delete `.browser-profiles/qcc-demo`.
 
-ArkClaw/Linux browser note:
-
-- Do not run `playwright install` just to download Playwright's bundled Chromium when ArkClaw already has system Chromium/Chrome.
-- Set `QCC_BROWSER_EXECUTABLE=/usr/bin/chromium` or another real browser path before running QCC workflows.
-- The demo script also checks common Linux paths such as `/usr/bin/chromium`, `/usr/bin/chromium-browser`, `/usr/bin/google-chrome`, `/usr/bin/google-chrome-stable`, and the `PATH`.
-- When running as root on Linux, the script adds Chromium's `--no-sandbox` and `--disable-dev-shm-usage` startup flags automatically.
-
 In the final response, clearly state whether the company verification material was actually used in the review, and provide the local preview page path `output/qcc_login_demo/qcc_login_demo_latest.html` when QCC was opened. Do not say A1/A2/A3 or any rule ID. Use plain wording such as:
 
 - `本次已使用企查查可见页面生成的企业核验草稿重新审核。`

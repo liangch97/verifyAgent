@@ -1,8 +1,6 @@
 from demos.qcc_login_demo import (
     DEFAULT_LOGIN_ONLY_HOLD_SECONDS,
     DEFAULT_LOGIN_TIMEOUT_SECONDS,
-    chromium_launch_args,
-    find_chrome,
     has_logged_in_marker,
     is_allowed_qcc_detail_url,
     parse_args,
@@ -69,44 +67,6 @@ def test_qcc_detail_url_allowlist() -> None:
     assert is_allowed_qcc_detail_url("https://www.qcc.com/firm/6b242b475738f45a4dd180564d029aa9.html")
     assert not is_allowed_qcc_detail_url("https://www.qcc.com/web/search?key=华为")
     assert not is_allowed_qcc_detail_url("https://example.com/firm/6b242b475738f45a4dd180564d029aa9.html")
-
-
-def test_qcc_browser_executable_env_override(monkeypatch, tmp_path) -> None:
-    browser = tmp_path / "chromium"
-    browser.write_text("", encoding="utf-8")
-    monkeypatch.setenv("QCC_BROWSER_EXECUTABLE", str(browser))
-    monkeypatch.setattr("demos.qcc_login_demo.shutil.which", lambda _command: None)
-
-    assert find_chrome() == browser
-
-
-def test_qcc_browser_executable_from_system_path(monkeypatch, tmp_path) -> None:
-    browser = tmp_path / "chromium"
-    browser.write_text("", encoding="utf-8")
-    for key in [
-        "QCC_BROWSER_EXECUTABLE",
-        "PLAYWRIGHT_CHROMIUM_EXECUTABLE",
-        "CHROMIUM_PATH",
-        "CHROME_PATH",
-        "BROWSER_EXECUTABLE",
-    ]:
-        monkeypatch.delenv(key, raising=False)
-
-    def fake_exists(self):
-        return False
-
-    monkeypatch.setattr("demos.qcc_login_demo.Path.exists", fake_exists)
-    monkeypatch.setattr("demos.qcc_login_demo.shutil.which", lambda command: str(browser) if command == "chromium" else None)
-
-    assert find_chrome() == browser
-
-
-def test_qcc_linux_root_chromium_args(monkeypatch) -> None:
-    monkeypatch.setattr("demos.qcc_login_demo.sys.platform", "linux")
-    monkeypatch.setattr("demos.qcc_login_demo.os.geteuid", lambda: 0, raising=False)
-
-    assert "--disable-dev-shm-usage" in chromium_launch_args()
-    assert "--no-sandbox" in chromium_launch_args()
 
 
 def test_qcc_logged_in_marker() -> None:
