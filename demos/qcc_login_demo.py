@@ -4,7 +4,9 @@ import argparse
 import base64
 import html
 import json
+import os
 import re
+import shutil
 import sys
 import time
 from datetime import datetime
@@ -18,7 +20,8 @@ except ImportError as exc:  # pragma: no cover - optional demo dependency
     raise SystemExit(
         "This demo requires Playwright. Install it with:\n"
         "  pip install -r requirements-demo.txt\n"
-        "If Playwright asks for a browser, prefer using the local Chrome installation."
+        "Do not run `playwright install` in ArkClaw if system Chromium/Chrome is already available; "
+        "set QCC_BROWSER_EXECUTABLE or install a system chromium package instead."
     ) from exc
 
 
@@ -105,18 +108,24 @@ def main() -> None:
     latest_log_path = args.output_dir / "qcc_login_demo_latest.md"
     latest_json_path = args.output_dir / "qcc_login_demo_latest.json"
 
-    chrome_path = find_chrome()
+    browser_path = find_chrome()
+    if not browser_path:
+        raise SystemExit(
+            "No system Chromium/Chrome executable was found. Install system Chromium/Chrome in the ArkClaw Linux image "
+            "(for example /usr/bin/chromium), or set QCC_BROWSER_EXECUTABLE=/path/to/chromium. "
+            "The QCC demo intentionally avoids Playwright's bundled browser download."
+        )
 
     with sync_playwright() as p:
         launch_kwargs: dict[str, Any] = {
             "headless": args.headless,
             "viewport": {"width": 1366, "height": 900},
             "locale": "zh-CN",
+            "executable_path": str(browser_path),
         }
-        if chrome_path:
-            launch_kwargs["executable_path"] = str(chrome_path)
-        else:
-            launch_kwargs["channel"] = "chrome"
+        chromium_args = chromium_launch_args()
+        if chromium_args:
+            launch_kwargs["args"] = chromium_args
 
         context = p.chromium.launch_persistent_context(str(run_profile_dir), **launch_kwargs)
         page = context.pages[0] if context.pages else context.new_page()
@@ -355,16 +364,66 @@ def main() -> None:
 
 
 def find_chrome() -> Path | None:
-    candidates = [
+    env_candidates = [
+        os.environ.get("QCC_BROWSER_EXECUTABLE"),
+        os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"),
+        os.environ.get("CHROMIUM_PATH"),
+        os.environ.get("CHROME_PATH"),
+        os.environ.get("BROWSER_EXECUTABLE"),
+    ]
+    for value in env_candidates:
+        if not value:
+            continue
+        candidate = Path(value).expanduser()
+        if candidate.exists():
+            return candidate
+
+    fixed_candidates = [
+        Path("/usr/bin/chromium"),
+        Path("/usr/bin/chromium-browser"),
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/google-chrome-stable"),
+        Path("/usr/bin/microsoft-edge"),
+        Path("/usr/bin/microsoft-edge-stable"),
+        Path("/snap/bin/chromium"),
         Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
         Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
         Path.home() / r"AppData\Local\Google\Chrome\Application\chrome.exe",
         Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
+        Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
     ]
-    for candidate in candidates:
+    for candidate in fixed_candidates:
         if candidate.exists():
             return candidate
+
+    for command in [
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+        "chrome",
+        "msedge",
+    ]:
+        found = shutil.which(command)
+        if found:
+            return Path(found)
+
     return None
+
+
+def chromium_launch_args() -> list[str]:
+    args: list[str] = []
+    if sys.platform.startswith("linux"):
+        args.append("--disable-dev-shm-usage")
+        if _running_as_root_on_linux():
+            args.append("--no-sandbox")
+    return args
+
+
+def _running_as_root_on_linux() -> bool:
+    return sys.platform.startswith("linux") and hasattr(os, "geteuid") and os.geteuid() == 0
 
 
 def wait_for_login_checkpoint(
