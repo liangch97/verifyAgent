@@ -1,0 +1,24 @@
+# 合同字段定义（contract_case）
+
+- `source_file`: 输入文件绝对路径
+- `source_hash`: 文件哈希（SHA1 前12位）
+- `title`: 合同标题
+- `contract_no`: 合同编号
+- `sign_place`: 签订地点
+- `party_a`: 甲方信息（name/address/legal_rep/credit_code）
+- `party_b`: 乙方信息（name/address）
+- `project_name`: 项目名称
+- `contract_type`: 合同类型（技术开发/技术合作等）
+- `amount`: 合同金额文本
+- `payment_terms[]`: 付款节点文本列表
+- `bank_account`: 对公账户（name/account/bank）
+- `contacts[]`: 联系人结构（role/name/address/phone/postcode/email）
+- `sections[]`: 按标题切分的条款
+- `attachments[]`: 附件相关条目
+- `dates[]`: 日期字段集合
+- `ip_clauses[]`: 知识产权相关条款
+- `confidentiality_clauses[]`: 保密相关条款
+- `liability_clauses[]`: 违约赔偿相关条款
+- `dispute_resolution`: 争议解决条款汇总
+- `blanks[]`: 疑似空白项（line/text）
+- `raw_text_excerpt`: 合同文本前部片段

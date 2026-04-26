@@ -1,0 +1,21 @@
+{
+  "id": "contract-review-onboarding",
+  "name": "Contract Review Onboarding Prompt",
+  "description": "Adds administrative contract review usage guidance to the global OpenClaw system prompt.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["local", "cloud"]
+      },
+      "contractReviewHome": {
+        "type": "string"
+      },
+      "sampleContractPath": {
+        "type": "string"
+      }
+    }
+  }
+}

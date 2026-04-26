@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "company_check",
+  "type": "object",
+  "required": [
+    "source",
+    "checked_at",
+    "party_a"
+  ],
+  "properties": {
+    "source": {"type": "string"},
+    "checked_at": {"type": "string"},
+    "blocked_reason": {"type": "string"},
+    "evidence_files": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "party_a": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string"},
+        "credit_code": {"type": "string"},
+        "legal_rep": {"type": "string"},
+        "registered_address": {"type": "string"},
+        "company_status": {"type": "string"},
+        "company_type": {"type": "string"},
+        "business_scope": {"type": "string"},
+        "shareholders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "type": {"type": "string"}
+            }
+          }
+        },
+        "directors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "title": {"type": "string"}
+            }
+          }
+        },
+        "executives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "title": {"type": "string"}
+            }
+          }
+        },
+        "is_military_or_defense_related": {"type": ["boolean", "null"]},
+        "military_or_defense_evidence": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "related_to_research_team": {"type": ["boolean", "null"]},
+        "related_person_matches": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "research_team": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "role": {"type": "string"}
+        }
+      }
+    }
+  }
+}

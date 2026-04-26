@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "contract_review",
+  "type": "object",
+  "required": [
+    "source_file",
+    "decision",
+    "confidence",
+    "summary_stats",
+    "findings",
+    "not_checked_items",
+    "extracted",
+    "external_checks",
+    "generated_at"
+  ],
+  "properties": {
+    "source_file": {"type": "string"},
+    "decision": {"type": "string"},
+    "confidence": {"type": "number"},
+    "summary_stats": {
+      "type": "object",
+      "required": [
+        "findings_total",
+        "risk_total",
+        "enforce_total",
+        "review_total",
+        "info_total",
+        "not_checked_total",
+        "rules_total",
+        "rules_hit_total",
+        "rules_pass_total",
+        "rules_not_checked_total",
+        "by_scope",
+        "by_severity",
+        "risk_rule_ids",
+        "review_rule_ids",
+        "info_rule_ids"
+      ],
+      "properties": {
+        "findings_total": {"type": "integer"},
+        "risk_total": {"type": "integer"},
+        "enforce_total": {"type": "integer"},
+        "review_total": {"type": "integer"},
+        "info_total": {"type": "integer"},
+        "not_checked_total": {"type": "integer"},
+        "rules_total": {"type": "integer"},
+        "rules_hit_total": {"type": "integer"},
+        "rules_pass_total": {"type": "integer"},
+        "rules_not_checked_total": {"type": "integer"},
+        "by_scope": {"type": "object"},
+        "by_severity": {"type": "object"},
+        "risk_rule_ids": {"type": "array", "items": {"type": "string"}},
+        "review_rule_ids": {"type": "array", "items": {"type": "string"}},
+        "info_rule_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "rule_id",
+          "section",
+          "severity",
+          "scope",
+          "title",
+          "evidence",
+          "location",
+          "message",
+          "suggestion",
+          "confidence"
+        ],
+        "properties": {
+          "rule_id": {"type": "string"},
+          "section": {"type": "string"},
+          "severity": {"type": "string"},
+          "scope": {"type": "string"},
+          "title": {"type": "string"},
+          "evidence": {"type": "string"},
+          "location": {"type": "string"},
+          "message": {"type": "string"},
+          "suggestion": {"type": "string"},
+          "confidence": {"type": "number"},
+          "details": {"type": "object"}
+        }
+      }
+    },
+    "not_checked_items": {"type": "array", "items": {"type": "object"}},
+    "rule_results": {"type": "array", "items": {"type": "object"}},
+    "extracted": {"type": "object"},
+    "external_checks": {
+      "type": "object",
+      "required": [
+        "company_check_provided",
+        "source",
+        "checked_at",
+        "party_a_match",
+        "related_party_check",
+        "military_defense_check"
+      ],
+      "properties": {
+        "company_check_provided": {"type": "boolean"},
+        "source": {"type": "string"},
+        "checked_at": {"type": "string"},
+        "evidence_files": {"type": "array", "items": {"type": "string"}},
+        "party_a_match": {"type": "object"},
+        "related_party_check": {"type": "object"},
+        "military_defense_check": {"type": "object"}
+      }
+    },
+    "generated_at": {"type": "string"}
+  }
+}

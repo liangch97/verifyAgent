@@ -1,0 +1,52 @@
+{
+    "source":  "人工核验演示数据（非真实企查查结果）",
+    "checked_at":  "2026-04-24",
+    "evidence_files":  [
+
+                       ],
+    "party_a":  {
+                    "name":  "华为技术有限公司",
+                    "credit_code":  "914403001922038216",
+                    "legal_rep":  "张三",
+                    "registered_address":  "中国广东省深圳市龙岗区坂田华为总部办公楼",
+                    "company_status":  "存续",
+                    "company_type":  "有限责任公司",
+                    "business_scope":  "通信设备研发与技术服务，民用用途，不涉及国家秘密。",
+                    "shareholders":  [
+                                         {
+                                             "name":  "华为投资控股有限公司",
+                                             "type":  "机构"
+                                         }
+                                     ],
+                    "directors":  [
+                                      {
+                                          "name":  "王五",
+                                          "title":  "董事"
+                                      }
+                                  ],
+                    "executives":  [
+                                       {
+                                           "name":  "赵六",
+                                           "title":  "总经理"
+                                       }
+                                   ],
+                    "is_military_or_defense_related":  false,
+                    "military_or_defense_evidence":  [
+
+                                                     ],
+                    "related_to_research_team":  false,
+                    "related_person_matches":  [
+
+                                               ]
+                },
+    "research_team":  [
+                          {
+                              "name":  "陈壮彬",
+                              "role":  "项目负责人"
+                          },
+                          {
+                              "name":  "李一希",
+                              "role":  "授权签署人"
+                          }
+                      ]
+}

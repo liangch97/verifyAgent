@@ -1,0 +1,9 @@
+{
+  "name": "contract-review-onboarding",
+  "version": "0.1.0",
+  "description": "OpenClaw global prompt guidance for contract formal review.",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "contract_case",
+  "type": "object",
+  "required": [
+    "source_file",
+    "source_hash",
+    "title",
+    "party_a",
+    "party_b",
+    "project_name",
+    "payment_terms",
+    "bank_account",
+    "contacts",
+    "sections",
+    "attachments",
+    "dates",
+    "ip_clauses",
+    "confidentiality_clauses",
+    "liability_clauses",
+    "dispute_resolution",
+    "blanks",
+    "raw_text_excerpt"
+  ],
+  "properties": {
+    "source_file": {"type": "string"},
+    "source_hash": {"type": "string"},
+    "title": {"type": "string"},
+    "contract_no": {"type": "string"},
+    "sign_place": {"type": "string"},
+    "party_a": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "address": {"type": "string"},
+        "legal_rep": {"type": "string"},
+        "credit_code": {"type": "string"}
+      }
+    },
+    "party_b": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "address": {"type": "string"}
+      }
+    },
+    "project_name": {"type": "string"},
+    "contract_type": {"type": "string"},
+    "amount": {"type": "string"},
+    "payment_terms": {"type": "array", "items": {"type": "string"}},
+    "concrete_payment_terms": {"type": "array", "items": {"type": "string"}},
+    "bank_account": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "account": {"type": "string"},
+        "bank": {"type": "string"}
+      }
+    },
+    "contacts": {"type": "array", "items": {"type": "object"}},
+    "sections": {"type": "array", "items": {"type": "object"}},
+    "attachments": {"type": "array", "items": {"type": "string"}},
+    "missing_referenced_attachments": {"type": "array", "items": {"type": "string"}},
+    "dates": {"type": "array", "items": {"type": "string"}},
+    "ip_clauses": {"type": "array", "items": {"type": "string"}},
+    "confidentiality_clauses": {"type": "array", "items": {"type": "string"}},
+    "liability_clauses": {"type": "array", "items": {"type": "string"}},
+    "dispute_resolution": {"type": "string"},
+    "blanks": {"type": "array", "items": {"type": "object"}},
+    "raw_text_excerpt": {"type": "string"},
+    "comments": {"type": "array", "items": {"type": "object"}},
+    "highlights": {"type": "array", "items": {"type": "object"}},
+    "full_text": {"type": "string"}
+  }
+}
