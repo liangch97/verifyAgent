@@ -33,15 +33,31 @@ If the placeholder was not replaced, locate the folder that contains `run_contra
    python3 /root/full_qcc_review.py "<contract_file_path>"
    ```
    The script handles ALL user-facing output (status messages, QR codes, the final PDF) by pushing directly to Feishu. You do not need to summarize.
-4. **If the user request mentions a contract file (path, name, "这份合同", "刚才的合同", "重新审核") — ALWAYS run the script.** Do not ask for confirmation. Do not attempt to recall previous results.
-5. **If the contract path is not explicitly given but a file name appears**, locate it under `/root/contract-review-openclaw-portable/samples/` or ask once for the full path, then run the script.
-6. **If the inbound message contains an attached file (the prompt will include a system line like `[media attached: /root/.openclaw/media/inbound/<id>.docx (application/...)]` or the user message contains `<media:document>` / `<media:image>` placeholders), USE THAT EXACT PATH as `<contract_file_path>` and immediately run the script.** Recognize trigger phrases such as `审核这个`, `审核这份合同`, `看一下这个合同`, `帮我看看`, `这个合同有没有问题`, or even an attachment with no text — any attached `.docx` / `.pdf` / `.txt` file that appears to be a contract is itself a review request. Do NOT ask the user to retype the path; the path inside the `[media attached: ...]` line IS the file path. Quote the path with double quotes when invoking the command, since it may contain Chinese characters or spaces.
+4. **NEVER ASK CLARIFYING QUESTIONS.** A contract path + any review-intent phrase (审核, 帮我看, 看一下, 检查) is sufficient. **DO NOT ask for the user's name. DO NOT ask which review flow. DO NOT ask whether to use 企查查 or local-only mode. DO NOT ask whether the user wants a PDF or text.** Run the script immediately. The wrapper handles the QCC / no-QCC / Feishu / no-Feishu decision automatically.
+5. **NEVER announce intent without acting.** Phrases like "好，我先读合同，同时确认两件事" / "I'll review now after these questions" / "请告诉我您的称呼" / "请选择审核流程" are FORBIDDEN. The first action of every contract-review request must be the bash tool invocation. No preamble, no plan, no confirmation request.
+6. **If the contract path is not explicitly given but a file name appears**, locate it under `/root/contract-review-openclaw-portable/samples/` or ask once for the full path, then run the script.
+7. **If the inbound message contains an attached file (the prompt will include a system line like `[media attached: /root/.openclaw/media/inbound/<id>.docx (application/...)]` or the user message contains `<media:document>` / `<media:image>` placeholders), USE THAT EXACT PATH as `<contract_file_path>` and immediately run the script.** Recognize trigger phrases such as `审核这个`, `审核这份合同`, `看一下这个合同`, `帮我看看`, `这个合同有没有问题`, or even an attachment with no text — any attached `.docx` / `.pdf` / `.txt` file that appears to be a contract is itself a review request. Do NOT ask the user to retype the path; the path inside the `[media attached: ...]` line IS the file path. Quote the path with double quotes when invoking the command, since it may contain Chinese characters or spaces.
 
    Examples:
    - Inbound: `[media attached: /root/.openclaw/media/inbound/abc123.docx (application/vnd.openxmlformats-officedocument.wordprocessingml.document)]\n\n审核这个`
      → Run: `python3 /root/full_qcc_review.py "/root/.openclaw/media/inbound/abc123.docx"`
    - Inbound contains only the attached-file line and `<media:document> (合同.docx)` placeholder
      → Still run the script with the path from `[media attached: ...]`. The placeholder is just a label; the real path is in the attached line.
+
+## ❌ FORBIDDEN RESPONSES (do NOT emit any of these)
+
+| Bad response | Why it's wrong |
+|---|---|
+| `好，先读合同，同时快速确认两件事：你是？这篇合同走哪个审核流程？` | Asks for user name and flow — FORBIDDEN |
+| `请问您希望走企查查核验还是仅本地审核？` | Asks for review mode — FORBIDDEN |
+| `先读起来了，稍后给您结果` | Announces intent without invoking the tool — FORBIDDEN |
+| `请告诉我合同的项目名称和金额` | Re-asks for info already in the file — FORBIDDEN |
+| `根据合同内容，我建议关注以下几点……` | Textual summary instead of PDF — FORBIDDEN |
+
+The ONE correct response when an attached contract arrives:
+1. Call the bash tool: `python3 /root/full_qcc_review.py "/root/.openclaw/media/inbound/<id>.docx"`
+2. Wait for the script to finish.
+3. Send exactly one short Feishu reply: `审核完成，行政版PDF已推送。`
 
 ## ⚡ IM-Driven Mode (Feishu)
 
