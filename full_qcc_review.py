@@ -34,24 +34,25 @@ def _load_config() -> dict:
         env_v = os.environ.get(k)
         if env_v:
             data[k] = env_v
-    missing = [k for k in ("APP_ID", "APP_SECRET", "USER_OPEN_ID") if not data.get(k)]
-    if missing:
-        raise SystemExit(
-            f"[config] missing keys: {missing}. Set env vars or write {cfg_file}\n"
-            "Example config.json:\n"
-            '{\n'
-            '  "APP_ID": "cli_xxxxx",\n'
-            '  "APP_SECRET": "xxxxx",\n'
-            '  "USER_OPEN_ID": "ou_xxxxx",\n'
-            '  "OPENCLAW_PORTABLE_DIR": "/root/contract-review-openclaw-portable"\n'
-            '}'
-        )
+    # NOTE: missing Feishu keys is no longer fatal. The openclaw-gateway is
+    # the canonical IM channel; this script's direct Feishu push is optional
+    # (it is only used to send the QCC QR-code interactively). When keys are
+    # missing we degrade to "no Feishu push, no interactive QR" and simply
+    # run the review pipeline + write outputs that openclaw will pick up.
     return data
 
 _CFG = _load_config()
-APP_ID = _CFG["APP_ID"]
-APP_SECRET = _CFG["APP_SECRET"]
-USER_OPEN_ID = _CFG["USER_OPEN_ID"]
+APP_ID = _CFG.get("APP_ID", "")
+APP_SECRET = _CFG.get("APP_SECRET", "")
+USER_OPEN_ID = _CFG.get("USER_OPEN_ID", "")
+_FEISHU_ENABLED = bool(APP_ID and APP_SECRET and USER_OPEN_ID)
+if not _FEISHU_ENABLED:
+    print(
+        "[config] Feishu APP_ID/APP_SECRET/USER_OPEN_ID not set — "
+        "interactive QR-login skipped. QCC will only run if a previously "
+        "saved Chrome profile already has a valid login.",
+        flush=True,
+    )
 
 # ------- Paths -------
 DEMO_DIR = Path(_CFG.get("OPENCLAW_PORTABLE_DIR") or "/root/contract-review-openclaw-portable")
@@ -80,6 +81,9 @@ def _tat():
 
 
 def fs_text(text: str):
+    if not _FEISHU_ENABLED:
+        print(f"[fs_text(disabled)] {text}", flush=True)
+        return
     try:
         tat = _tat()
         chunks = [text[i:i+8000] for i in range(0, len(text), 8000)] or [""]
@@ -96,6 +100,9 @@ def fs_text(text: str):
 
 
 def fs_image(img_path: Path, caption: str = ""):
+    if not _FEISHU_ENABLED:
+        print(f"[fs_image(disabled)] {img_path} :: {caption}", flush=True)
+        return
     try:
         tat = _tat()
         with open(img_path, "rb") as f:
@@ -119,6 +126,9 @@ def fs_image(img_path: Path, caption: str = ""):
 
 
 def fs_file(fpath: Path, file_type: str = "stream"):
+    if not _FEISHU_ENABLED:
+        print(f"[fs_file(disabled)] {fpath}", flush=True)
+        return
     try:
         tat = _tat()
         with open(fpath, "rb") as f:
@@ -245,14 +255,32 @@ def main():
 
     fs_text(f"📋 开始审核\n合同: {contract.name}\n甲方: {company}\n步骤 1/4: 启动 QCC 登录...")
 
-    from playwright.sync_api import sync_playwright
-
     stamp = time.strftime("%Y%m%d_%H%M%S")
     safe = qd.safe_name(company)
     qr_png = OUTDIR / f"qcc_qr_{stamp}.png"
     result_png = OUTDIR / f"qcc_result_{safe}_{stamp}.png"
     text_txt = OUTDIR / f"qcc_text_{safe}_{stamp}.txt"
     draft_json = OUTDIR / f"company_check_draft_{safe}_{stamp}.json"
+
+    # ---- Fast path: skip QCC entirely when Feishu push is disabled ----
+    # Without Feishu we cannot push the QR for the user to scan, so any
+    # interactive login is impossible. Write a stub draft and proceed
+    # straight to the rule-based review so the user still gets a report.
+    if not _FEISHU_ENABLED:
+        print("[qcc] Feishu disabled → skipping QCC, running rule-only review", flush=True)
+        stub_draft = {
+            "company_name": company,
+            "source": "skipped_no_feishu_config",
+            "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S+0800"),
+            "fields": {"name": "", "extraction_mode": "skipped_no_feishu_config"},
+            "party_a": {"name": ""},
+            "extraction_mode": "skipped_no_feishu_config",
+        }
+        draft_json.write_text(json.dumps(stub_draft, ensure_ascii=False, indent=2), encoding="utf-8")
+        _run_review_and_deliver(contract, company, draft_json, stamp)
+        return
+
+    from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
@@ -281,6 +309,13 @@ def main():
         login_ok = not blocked and bool(visible_text) and not qd.detect_blocked_reason(visible_text)
         if login_ok:
             fs_text("✅ 登录态已复用，跳过扫码")
+        elif not _FEISHU_ENABLED:
+            # Without Feishu we cannot push the QR for the user to scan, so
+            # interactive login is impossible. Skip QCC entirely and fall
+            # through to the no-QCC review branch handled after this block.
+            fs_text("[提示] 未配置飞书推送，跳过 QCC 扫码登录，本次仅做规则审核")
+            login_ok = False
+            visible_text = ""
         else:
             # Need QR scan
             fs_text("⚠️ 登录态失效，需要扫码")
@@ -422,7 +457,12 @@ def main():
         except Exception:
             pass
 
-    # ============ Phase 3: contract review ============
+    _run_review_and_deliver(contract, company, draft_json, stamp)
+
+
+def _run_review_and_deliver(contract: Path, company: str, draft_json: Path, stamp: str) -> None:
+    """Run rule-based review using the (possibly stub) QCC draft and deliver
+    the admin PDF. Shared between the QCC-enabled and QCC-skipped paths."""
     fs_text("步骤 3/4: 调用形式化审核引擎...")
     out_dir = REVIEW_DIR / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -437,26 +477,26 @@ def main():
         fs_text("[err] 审核超时")
         sys.exit(6)
 
-    # ============ Phase 4: deliver ============
     md = next(out_dir.glob("contract_review.md"), None)
-    xlsx = next(out_dir.glob("*.xlsx"), None)
-    findings = next(out_dir.glob("contract_findings_*.json"), None)
     if not md:
         fs_text("[err] 审核未产出 md")
         sys.exit(7)
 
-    # Parse decision
     md_text = md.read_text(encoding="utf-8")
     decision = ""
     confidence = ""
     for line in md_text.splitlines()[:10]:
-        if "审核结论" in line: decision = line.split("：", 1)[-1].strip("* ")
-        if "置信度" in line: confidence = line.split("：", 1)[-1].strip()
+        # Only the front-matter list lines like "- 审核结论：**xxx**".
+        if not line.lstrip().startswith("-"):
+            continue
+        if not decision and "审核结论" in line:
+            decision = line.split("：", 1)[-1].strip(" *")
+        if not confidence and "置信度" in line:
+            confidence = line.split("：", 1)[-1].strip(" *")
     fs_text(f"步骤 4/4: 审核完成\n结论: {decision}\n置信度: {confidence}\n正在生成行政版报告...")
 
-    # ====== Dual-track LLM cross-check (internal only, not exposed to user) ======
-    rule_ext = {}
-    llm_ext = {}
+    rule_ext: dict = {}
+    llm_ext: dict = {}
     try:
         sys.path.insert(0, str(Path(__file__).parent))
         from llm_field_extract import llm_extract
@@ -474,8 +514,7 @@ def main():
         print(f"[merge warn] {e}", flush=True)
         traceback.print_exc()
 
-    # ====== Generate admin-friendly PDF ======
-    company_check = {}
+    company_check: dict = {}
     try:
         company_check = json.loads(draft_json.read_text(encoding="utf-8")) if draft_json.exists() else {}
     except Exception:
