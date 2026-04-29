@@ -180,6 +180,11 @@ def _extract_amount(text: str) -> str:
             context = match.group(0)
             if "未支付" in context or "另行付费" in context:
                 continue
+            # Strip leading/trailing brackets and whitespace introduced by the
+            # regex grabbing into a 【...】 fragment, e.g. "【叁万伍仟元".
+            value = value.strip(" 　【】[]（）()¥￥:：，,。")
+            if not value:
+                continue
             return value
     return ""
 
