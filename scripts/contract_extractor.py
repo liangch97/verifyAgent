@@ -342,5 +342,12 @@ def _extract_party_name(text: str, role: str) -> str:
         # Reject signature-page placeholders without real content
         if cleaned in {"盖章", "签名", "签章", "签字", "印章", "公章"}:
             continue
+        # PDF text extraction often inserts spaces inside CJK names ("华为技术
+        # 有限公 司"). If the value is dominated by CJK characters, drop all
+        # internal whitespace so downstream QCC matching works.
+        cjk = sum(1 for c in cleaned if "\u4e00" <= c <= "\u9fff")
+        non_space = [c for c in cleaned if not c.isspace()]
+        if non_space and cjk / max(len(non_space), 1) >= 0.6:
+            cleaned = "".join(non_space)
         return cleaned
     return ""

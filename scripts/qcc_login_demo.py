@@ -740,13 +740,33 @@ def extract_qcc_card_fields_v2(company_name: str, visible_text: str) -> dict:
     return fields
 # >>> end qcc_card_v2 patch <<<
 
+def _normalize_company_name(name: str) -> str:
+    """Drop all whitespace from a Chinese company name. PDF text extraction
+    sometimes inserts a space inside Chinese tokens ("华为技术有限公 司"),
+    which breaks exact substring matching against the QCC page."""
+    return re.sub(r"\s+", "", name or "")
+
+
+def _name_visible_in(company_name: str, visible_text: str) -> bool:
+    """Whitespace-tolerant company-name presence check."""
+    if not company_name or not visible_text:
+        return False
+    if company_name in visible_text:
+        return True
+    return _normalize_company_name(company_name) in _normalize_company_name(visible_text)
+
+
 def build_company_check_draft(
     company_name: str,
     visible_text: str,
     screenshot: Path,
     blocked_reason: str,
 ) -> dict[str, Any]:
-    target_company_visible = bool(visible_text and company_name in visible_text and not is_qcc_login_page(visible_text))
+    target_company_visible = bool(
+        visible_text
+        and _name_visible_in(company_name, visible_text)
+        and not is_qcc_login_page(visible_text)
+    )
     if not target_company_visible:
         registry_fields = {
             "name": "",
@@ -866,7 +886,7 @@ def extract_company_registry_fields(company_name: str, visible_text: str) -> dic
 
     text = "\n".join(lines)
     return {
-        "name": company_name if company_name in text else "",
+        "name": _normalize_company_name(company_name) if _name_visible_in(company_name, text) else "",
         "company_status": first_labeled_match(text, ["登记状态", "经营状态", "状态"], max_len=20),
         "credit_code": first_match(text, r"(?:统一社会信用代码|信用代码)[：:\s]*([0-9A-Z]{18})"),
         "legal_rep": first_labeled_match(text, ["法定代表人", "法人代表", "法人"], max_len=30),
@@ -918,8 +938,12 @@ def extract_named_people(text: str, titles: list[str]) -> list[dict[str, str]]:
 def first_exact_company_card(company_name: str, lines: list[str]) -> list[str]:
     status_words = "(?:存续|在业|正常|开业|在营|注销|吊销|迁出|停业|清算|已告解散)"
     exact_pattern = re.compile(rf"^{re.escape(company_name)}(?:\s+{status_words})?$")
+    normalized_target = _normalize_company_name(company_name)
+    norm_pattern = re.compile(rf"^{re.escape(normalized_target)}(?:\s*{status_words})?$") if normalized_target else None
     for idx, line in enumerate(lines):
-        if not exact_pattern.match(line):
+        line_norm = _normalize_company_name(line)
+        matched = exact_pattern.match(line) or (norm_pattern and norm_pattern.match(line_norm))
+        if not matched:
             continue
         if any(suffix in line.replace(company_name, "", 1) for suffix in ["分公司", "研究所", "办事处"]):
             continue

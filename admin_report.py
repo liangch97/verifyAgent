@@ -33,6 +33,45 @@ def _pick(*vals) -> str:
     return ""
 
 
+_MOJIBAKE_HINTS = set("åæäèçñëïüÅÆÄÈÇÑËÏÜÃÂÔÕÖÝÞßçÇÉÊËÍÎÏÓÔÕÖÚÛÜ")
+
+
+def _looks_like_mojibake(name: str) -> bool:
+    """Heuristic: filename downloaded from IM with UTF-8 bytes mis-decoded as
+    Latin-1 / CP1252. The result has many `å æ ä è ç` characters interleaved
+    with `_` placeholders for control bytes."""
+    if not name:
+        return False
+    hits = sum(1 for ch in name if ch in _MOJIBAKE_HINTS)
+    return hits >= 3
+
+
+def _safe_filename(name: str) -> str:
+    """Display-friendly source filename: drop mojibake-looking part, keep
+    the trailing UUID/extension as a stable identifier."""
+    if not name:
+        return "—"
+    if not _looks_like_mojibake(name):
+        return name
+    # Try to keep the trailing -<uuid>.<ext>
+    m = re.search(r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.([A-Za-z0-9]+)$", name)
+    if m:
+        return f"(原始文件名编码异常) …{m.group(1)[-12:]}.{m.group(2)}"
+    suffix = name.rsplit(".", 1)[-1] if "." in name else "bin"
+    return f"(原始文件名编码异常).{suffix}"
+
+
+def _truncate(value: str, max_len: int = 600) -> str:
+    """Cap a single table-cell value. Long polluted text from PDF extraction
+    can blow weasyprint layout time from seconds to minutes."""
+    if not value:
+        return value
+    s = str(value)
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 1].rstrip() + "…"
+
+
 def merged_basic_info(rule: dict, llm: dict, contract_path: Path) -> dict[str, str]:
     """Merge rule+llm, prefer the more accurate value."""
     r_pa = rule.get("party_a") or {}
@@ -74,7 +113,7 @@ def merged_basic_info(rule: dict, llm: dict, contract_path: Path) -> dict[str, s
             f"{llm.get('perform_start','')} 至 {llm.get('perform_end','')}".strip(" 至 ")
         ) or "—",
         "合同金额": amount or "—",
-        "源文件": contract_path.name,
+        "源文件": _safe_filename(contract_path.name),
     }
 
 
@@ -306,16 +345,22 @@ def render_admin_pdf(
         decision_class = "bad"
 
     # Basic info as 2-col rows
-    basic_rows = [[k, v] for k, v in merged.items()]
+    basic_rows = [[k, _truncate(v, 400)] for k, v in merged.items()]
 
     fix_items = _extract_section_table(md_text, _SECTIONS["fix"])
     manual_items = _extract_section_table(md_text, _SECTIONS["manual"])
     info_items = _extract_section_table(md_text, _SECTIONS["info"])
 
     def _items_to_rows(items: list[dict]) -> list[list[str]]:
-        return [[it["序号"], it["事项"], it["关联条款"], it["风险说明"], it["建议处理"]] for it in items]
+        return [[
+            it["序号"],
+            _truncate(it["事项"], 80),
+            _truncate(it["关联条款"], 600),
+            _truncate(it["风险说明"], 600),
+            _truncate(it["建议处理"], 400),
+        ] for it in items]
 
-    qcc_table_rows = [[r["项目"], r["合同声称"], r["工商抓取"], r["结论"]] for r in qcc_rows]
+    qcc_table_rows = [[r["项目"], _truncate(r["合同声称"], 200), _truncate(r["工商抓取"], 200), r["结论"]] for r in qcc_rows]
 
     template_section_html = _render_template_section(rule_extracted)
 
