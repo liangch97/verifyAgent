@@ -172,6 +172,32 @@ def md_to_pdf(md_path: Path) -> Path | None:
         return None
 
 
+# ============= Previous-report detection =============
+_REPORT_MARKERS = (
+    "合同形式化审核报告",
+    "合同审核报告_行政版",
+    "本报告由合同形式化审核系统自动生成",
+    "审核结论",
+)
+
+
+def looks_like_previous_report(contract_path: Path) -> bool:
+    """Return True if the file appears to be a previously generated review report.
+
+    Avoids ingesting an admin-PDF as a fresh contract (which causes recursive
+    title pollution and meaningless QCC queries).
+    """
+    try:
+        from scripts.contract_loader import load_contract
+        loaded = load_contract(contract_path)
+        text = "\n".join(b.get("text", "") for b in loaded.get("ordered_blocks", []))
+    except Exception:
+        return False
+    head = text[:3000]
+    hits = sum(1 for m in _REPORT_MARKERS if m in head)
+    return hits >= 2
+
+
 # ============= Contract Party A extraction =============
 def extract_party_a(contract_path: Path) -> str:
     """Try to extract Party A name from contract."""
@@ -204,6 +230,13 @@ def main():
     if not contract.exists():
         fs_text(f"[error] 合同文件不存在: {contract}")
         sys.exit(2)
+
+    if looks_like_previous_report(contract):
+        fs_text(
+            "[拒收] 检测到上传的文件是上一份《合同形式化审核报告》，"
+            "而非待审合同本身。请重新上传原始合同（.docx 或合同正文 PDF）。"
+        )
+        sys.exit(3)
 
     company = args.company_name or extract_party_a(contract)
     if not company:

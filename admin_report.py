@@ -467,6 +467,62 @@ tr { page-break-inside: avoid; page-break-after: auto; }
 thead { display: table-header-group; }
 """
 
+    from weasyprint import HTML, CSS  # noqa: F401  (kept for backward compatibility)
+
+    finished = _render_with_watchdog(html, css, output_pdf, timeout_s=int(__import__("os").environ.get("ADMIN_PDF_TIMEOUT_S", "30")))
+    if not finished:
+        # fall back to plain-text version so the user gets *something*
+        render_text_fallback(md_text=md_text, contract_path=contract_path, output_pdf=output_pdf)
+    return output_pdf
+
+
+def _render_with_watchdog(html_str: str, css_str: str, output_pdf: Path, timeout_s: int = 30) -> bool:
+    """Render PDF in a background thread; if it exceeds timeout_s, return False.
+
+    weasyprint runs in-process and isn't trivially cancellable, so we let the
+    thread keep running but stop waiting and let the caller fall back to a
+    plain-text downgrade. The renderer thread will eventually finish on its
+    own and the file will be written; that's fine because by then we already
+    returned a degraded result to the user.
+    """
+    import threading
+    from weasyprint import HTML, CSS
+
+    done = threading.Event()
+    err: list[BaseException] = []
+
+    def _run():
+        try:
+            HTML(string=html_str).write_pdf(str(output_pdf), stylesheets=[CSS(string=css_str)])
+        except BaseException as exc:  # noqa: BLE001
+            err.append(exc)
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    finished = done.wait(timeout=timeout_s)
+    if not finished:
+        return False
+    if err:
+        raise err[0]
+    return True
+
+
+def render_text_fallback(*, md_text: str, contract_path: Path, output_pdf: Path) -> Path:
+    """Render a minimal plain-text PDF when the rich layout times out."""
+    from weasyprint import HTML, CSS
+    safe_name = _safe_filename(contract_path.name)
+    body = (md_text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    html = f"""
+<html><body>
+  <h1>合同形式化审核报告（精简版）</h1>
+  <p>源文件：{safe_name}</p>
+  <p style="color:#b91c1c">注意：完整版渲染超时，已降级为精简文本版。请检查源合同是否包含异常长段落或跨页污染。</p>
+  <pre style="white-space:pre-wrap;font-size:9pt;">{body}</pre>
+</body></html>
+"""
+    css = "@page { size: A4; margin: 16mm; } body { font-family: 'Noto Sans CJK SC',sans-serif; }"
     HTML(string=html).write_pdf(str(output_pdf), stylesheets=[CSS(string=css)])
     return output_pdf
 

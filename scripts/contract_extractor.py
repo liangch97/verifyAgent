@@ -342,6 +342,18 @@ def _extract_party_name(text: str, role: str) -> str:
         # Reject signature-page placeholders without real content
         if cleaned in {"盖章", "签名", "签章", "签字", "印章", "公章"}:
             continue
+        # Reject overly long matches and template-instruction false hits.
+        # Real party names are rarely > 40 chars; longer values almost always
+        # come from a regex that swallowed an explanation sentence such as
+        # "本合同书适用于一方当事人（受托方）以技术知识为另一方".
+        if len(cleaned) > 40:
+            continue
+        _TEMPLATE_NOISE = (
+            "本合同书", "合同当事人", "示范文本", "适用于", "印制",
+            "增页", "另行约定", "组成部分", "可推介", "无需填写",
+        )
+        if any(noise in cleaned for noise in _TEMPLATE_NOISE):
+            continue
         # PDF text extraction often inserts spaces inside CJK names ("华为技术
         # 有限公 司"). If the value is dominated by CJK characters, drop all
         # internal whitespace so downstream QCC matching works.
