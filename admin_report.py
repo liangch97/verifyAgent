@@ -214,6 +214,76 @@ def _table(headers: list[str], rows: list[list[str]], col_widths: list[str] | No
     return f"<table>{cw}<thead><tr>{th}</tr></thead><tbody>{body}</tbody></table>"
 
 
+_TEMPLATE_STATUS_LABEL = {
+    "unchanged": "未改动",
+    "modified": "有修改",
+    "rewritten": "重大改写",
+    "removed": "范本中存在但合同未见",
+    "added": "合同新增",
+}
+
+
+def _render_template_section(rule_extracted: dict) -> str:
+    tm = (rule_extracted or {}).get("template_match") or {}
+    if not tm or tm.get("error"):
+        msg = tm.get("error") if tm else "未配置范本合同库"
+        return (
+            "<section>"
+            "<h2>三、学校范本对照</h2>"
+            f"<p class='hint'>{_h('范本对照不可用：' + (msg or ''))}</p>"
+            "</section>"
+        )
+    if not tm.get("matched"):
+        sim = tm.get("similarity") or 0.0
+        best = tm.get("template_name") or "（无）"
+        return (
+            "<section>"
+            "<h2>三、学校范本对照</h2>"
+            f"<p class='hint'>未识别为现有学校范本（最相似：{_h(best)}，相似度 {sim:.0%}）。"
+            "已按通用规则审查。</p>"
+            "</section>"
+        )
+    sim = tm.get("similarity") or 0.0
+    name = tm.get("template_name") or "未知范本"
+    counts = tm.get("counts") or {}
+    modified_n = tm.get("modified_count") or 0
+    summary = tm.get("summary") or ""
+    rows = []
+    for idx, c in enumerate(tm.get("clauses") or [], start=1):
+        status = c.get("status", "")
+        label = _TEMPLATE_STATUS_LABEL.get(status, status)
+        ratio = c.get("diff_ratio")
+        ratio_txt = f"{ratio:.0%}" if isinstance(ratio, (int, float)) else "-"
+        rows.append([
+            str(idx),
+            c.get("title") or c.get("id") or "",
+            label,
+            ratio_txt,
+            (c.get("template_excerpt") or "")[:120],
+            (c.get("contract_excerpt") or "")[:120],
+        ])
+    badge_class = "warn" if modified_n else "info"
+    badge_text = f"{modified_n} 处修改" if modified_n else "条款未改动"
+    header = (
+        f"<p class='hint'>识别为学校范本：<b>{_h(name)}</b>（整体相似度 {sim:.0%}）。"
+        f"未改动 {counts.get('unchanged', 0)} / 修改 {counts.get('modified', 0)} / "
+        f"改写 {counts.get('rewritten', 0)} / 缺失 {counts.get('removed', 0)} / "
+        f"新增 {counts.get('added', 0)}。{_h(summary)}</p>"
+    )
+    return (
+        "<section>"
+        f"<h2>三、学校范本对照 <span class='badge {badge_class}'>{badge_text}</span></h2>"
+        f"{header}"
+        + _table(
+            ["序号", "条款", "状态", "差异度", "范本摘要", "合同摘要"],
+            rows,
+            ["5%", "20%", "12%", "8%", "27%", "28%"],
+        )
+        + "</section>"
+    )
+
+
+
 def render_admin_pdf(
     *,
     rule_extracted: dict,
@@ -246,6 +316,8 @@ def render_admin_pdf(
         return [[it["序号"], it["事项"], it["关联条款"], it["风险说明"], it["建议处理"]] for it in items]
 
     qcc_table_rows = [[r["项目"], r["合同声称"], r["工商抓取"], r["结论"]] for r in qcc_rows]
+
+    template_section_html = _render_template_section(rule_extracted)
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -280,20 +352,22 @@ def render_admin_pdf(
     {_table(["核查项", "合同声称", "工商抓取", "比对结论"], qcc_table_rows, ["20%", "30%", "35%", "15%"])}
   </section>
 
+  {template_section_html}
+
   <section>
-    <h2>三、建议先修改的事项 <span class="badge bad">{len(fix_items)} 项</span></h2>
+    <h2>四、建议先修改的事项 <span class="badge bad">{len(fix_items)} 项</span></h2>
     {_table(["序号", "事项", "关联条款/证据", "风险说明", "建议处理"],
             _items_to_rows(fix_items), ["5%", "16%", "26%", "26%", "27%"])}
   </section>
 
   <section>
-    <h2>四、需要人工确认或补充材料 <span class="badge warn">{len(manual_items)} 项</span></h2>
+    <h2>五、需要人工确认或补充材料 <span class="badge warn">{len(manual_items)} 项</span></h2>
     {_table(["序号", "事项", "关联条款/证据", "风险说明", "建议处理"],
             _items_to_rows(manual_items), ["5%", "16%", "26%", "26%", "27%"])}
   </section>
 
   <section>
-    <h2>五、信息提示 <span class="badge info">{len(info_items)} 项</span></h2>
+    <h2>六、信息提示 <span class="badge info">{len(info_items)} 项</span></h2>
     {_table(["序号", "事项", "关联条款/证据", "风险说明", "建议处理"],
             _items_to_rows(info_items), ["5%", "16%", "26%", "26%", "27%"])}
   </section>

@@ -201,6 +201,11 @@ The script pipeline is:
 
 1. `scripts/contract_loader.py`: load `.docx/.pdf/.txt`, including Word comments and highlights where possible.
 2. `scripts/contract_extractor.py`: extract contract fields and evidence snippets.
+   It now also calls `scripts/template_matcher.py`, which compares the contract
+   against `references/templates/*.docx` (中山大学科研合同范本). If the contract
+   is based on a school template, the result `template_match` reports per-clause
+   status (unchanged / modified / rewritten / added / removed) and is rendered
+   as section "三、学校范本对照" in the admin PDF.
 3. `scripts/contract_rule_checker.py`: apply `references/rules/horizontal_contract_formal_rules.yaml`.
 4. `scripts/contract_report_writer.py`: write Markdown, JSON, and Excel outputs to `output/`.
 
