@@ -24,3 +24,6 @@ Thumbs.db
 _*.py
 _*.sh
 _dump*.txt
+
+# Local-only secrets (not committed)
+.local/
