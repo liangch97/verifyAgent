@@ -40,5 +40,20 @@ else
     echo "[install] WARNING: $PORTABLE_DIR/demos not found; skipping qcc_login_demo.py"
 fi
 
+# 4. openclaw workspace bootstrap (IDENTITY/USER/SOUL + delete BOOTSTRAP.md)
+WS_DIR="${HOME}/.openclaw/workspace"
+if [ -d "$WS_DIR" ]; then
+    for f in IDENTITY.md USER.md SOUL.md; do
+        if [ -f "$REPO_DIR/openclaw-workspace/$f" ]; then
+            cp -v "$REPO_DIR/openclaw-workspace/$f" "$WS_DIR/$f"
+        fi
+    done
+    if [ -f "$WS_DIR/BOOTSTRAP.md" ]; then
+        rm -v "$WS_DIR/BOOTSTRAP.md"
+    fi
+else
+    echo "[install] WARNING: $WS_DIR not found; skipping workspace bootstrap"
+fi
+
 echo "[install] done."
 echo "[install] now run: openclaw gateway"
