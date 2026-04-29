@@ -1,0 +1,26 @@
+# Local config / secrets — never commit
+config.json
+.config/
+.browser-profiles/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Output artifacts
+output/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+
+# Test scratch files
+_*.py
+_*.sh
+_dump*.txt

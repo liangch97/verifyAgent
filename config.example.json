@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy this file to ~/.config/contract-review-feishu-bot/config.json and fill in actual values.",
+  "APP_ID": "cli_xxxxxxxxxxxx",
+  "APP_SECRET": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "USER_OPEN_ID": "ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "OPENCLAW_PORTABLE_DIR": "/root/contract-review-openclaw-portable"
+}
