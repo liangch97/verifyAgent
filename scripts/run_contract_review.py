@@ -9,6 +9,7 @@ from .contract_extractor import extract_contract
 from .contract_loader import load_contract
 from .contract_report_writer import write_outputs
 from .contract_rule_checker import check_contract, load_rules
+from .template_matcher import detect_template_match
 from .utils import file_hash
 
 
@@ -32,12 +33,23 @@ def main() -> None:
     extracted = extract_contract(loaded)
     extracted["source_hash"] = file_hash(args.input)
 
+    # Template-based contract detection (range over school templates).
+    try:
+        template_match = detect_template_match(
+            extracted.get("full_text", "") or "\n".join(b.get("text", "") for b in loaded.get("ordered_blocks", [])),
+            contract_path=args.input,
+        )
+    except Exception as exc:  # noqa: BLE001
+        template_match = {"matched": False, "reason": f"detect_failed:{exc}"}
+    extracted["template_match"] = template_match
+
     company_check = None
     if args.company_check:
         company_check = load_company_check(args.company_check)
 
     rules = load_rules(args.rules)
     review = check_contract(extracted, rules, company_check=company_check)
+    review["template_match"] = template_match
 
     paths = write_outputs(review, args.output_dir, extracted["source_hash"])
     print(f"[done] decision={review['decision']} confidence={review['confidence']}")

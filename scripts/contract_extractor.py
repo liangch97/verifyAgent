@@ -6,7 +6,35 @@ from typing import Any
 from .utils import find_first, normalize_spaces
 
 
-HEADING_RE = re.compile(r"^(第[一二三四五六七八九十百]+[条章节部分]|[0-9]+(?:\.[0-9]+)*|第一部分|第二部分|第三部分|附件)")
+HEADING_RE = re.compile(
+    r"^("
+    r"第[一二三四五六七八九十百零〇\d]+[条章节部分]"
+    r"|[0-9]+(?:\.[0-9]+)*"
+    r"|第[一二三四五六七八九十]+部分"
+    r"|[一二三四五六七八九十]+[、.]"
+    r"|（[一二三四五六七八九十]+）"
+    r"|附件"
+    r")"
+)
+
+# Party-role aliases: when 甲方/乙方 are not used directly, fall back to these.
+# Mapping points to the canonical role ("甲" or "乙") indicating which extraction slot to fill.
+_PARTY_ROLE_ALIASES: dict[str, str] = {
+    "甲方": "甲",
+    "委托方": "甲",
+    "项目甲方": "甲",
+    "需求方": "甲",
+    "转让方": "甲",
+    "采购方": "甲",
+    "乙方": "乙",
+    "项目乙方": "乙",
+    "受托方": "乙",
+    "研究方": "乙",
+    "服务方": "乙",
+    "受让方": "乙",
+    "合作方": "乙",
+    "供方": "乙",
+}
 
 
 def extract_contract(loaded: dict[str, Any]) -> dict[str, Any]:
@@ -21,8 +49,8 @@ def extract_contract(loaded: dict[str, Any]) -> dict[str, Any]:
     ], text)
     sign_place = find_first([r"签订地点[：: ]*([^\n]+)", r"签署地点[：: ]*([^\n]+)"], text)
 
-    party_a_name = _extract_party_name(text, "甲方")
-    party_b_name = _extract_party_name(text, "乙方")
+    party_a_name = _extract_party_name(text, "甲")
+    party_b_name = _extract_party_name(text, "乙")
 
     project_name = _extract_project_name(lines, text, title)
     contract_type = _infer_contract_type(text, title)
@@ -85,7 +113,22 @@ def extract_contract(loaded: dict[str, Any]) -> dict[str, Any]:
         "comments": loaded.get("comments", []),
         "highlights": loaded.get("highlights", []),
         "full_text": text,
+        "template_match": _detect_template_match_safe(text, loaded.get("source_file", "")),
     }
+
+
+def _detect_template_match_safe(text: str, source_path: str) -> dict:
+    try:
+        from .template_matcher import detect_template_match
+    except Exception:
+        try:
+            from template_matcher import detect_template_match  # type: ignore
+        except Exception:
+            return {"matched": False, "error": "template_matcher unavailable"}
+    try:
+        return detect_template_match(text, contract_path=source_path)
+    except Exception as e:
+        return {"matched": False, "error": str(e)}
 
 
 def _extract_title(lines: list[str]) -> str:
@@ -136,6 +179,11 @@ def _extract_amount(text: str) -> str:
             value = match.group(1).strip()
             context = match.group(0)
             if "未支付" in context or "另行付费" in context:
+                continue
+            # Strip leading/trailing brackets and whitespace introduced by the
+            # regex grabbing into a 【...】 fragment, e.g. "【叁万伍仟元".
+            value = value.strip(" 　【】[]（）()¥￥:：，,。")
+            if not value:
                 continue
             return value
     return ""
@@ -251,14 +299,72 @@ def _extract_blanks(lines: list[str]) -> list[dict[str, str]]:
 
 
 def _extract_party_name(text: str, role: str) -> str:
-    patterns = [
-        rf"{role}[：: ]*[【\[]?([^】\]\n]+)[】\]]",
-        rf"{role}[：: ]*([^\n]+)",
-    ]
+    """Extract the party name for the given canonical role ("甲" or "乙").
+
+    Tries 甲方/乙方 first, then falls back to school-template aliases such as
+    委托方/研究方/受托方 etc. so the extraction also works for templates that
+    do not use the 甲乙方 vocabulary directly.
+    """
+    role = role.strip()
+    if role.endswith("方"):
+        role = role[:-1]
+    canonical = (role + "方") if role else ""
+    aliases = [a for a, r in _PARTY_ROLE_ALIASES.items() if r == role]
+    # Always try the canonical 甲方/乙方 first, then aliases.
+    if canonical and canonical not in aliases:
+        aliases = [canonical] + aliases
+    # Prefer canonical first, then longer aliases (more specific).
+    aliases.sort(key=lambda x: (0 if x == canonical else 1, -len(x)))
+
+    patterns: list[str] = []
+    for alias in aliases:
+        # alias followed by optional supplementary parenthesised label, then ：/: and the value
+        patterns.append(rf"{alias}[ \t　]*(?:[（(][^）)\n]+[)）])?[ \t　]*[：:][ \t　]*[【\[]([^】\]\n]+)[】\]]")
+        patterns.append(rf"{alias}[ \t　]*(?:[（(][^）)\n]+[)）])?[ \t　]*[：:][ \t　]*([^\n]+)")
+        # alias appearing inside a parenthesised label after the value: "中山大学（甲方）"
+        patterns.append(rf"([\u4e00-\u9fa5A-Za-z0-9·.\-（）()&]+?)\s*[（(]\s*{alias}\s*[)）]")
+
+    other_aliases = [k for k in _PARTY_ROLE_ALIASES if _PARTY_ROLE_ALIASES[k] != role]
+    other_re = "|".join(re.escape(a) for a in other_aliases) or "甲方|乙方"
+
     for p in patterns:
         m = re.search(p, text)
-        if m:
-            val = m.group(1).strip()
-            val = re.split(r"\s+乙方[：:]|\s+甲方[：:]", val)[0].strip()
-            return val.strip("【】[] ")
+        if not m:
+            continue
+        val = m.group(1).strip()
+        # cut off when the next party label appears in the same line
+        val = re.split(rf"\s+(?:{other_re})[：:（(]", val)[0].strip()
+        # also trim trailing role label that crept in (e.g. "中山大学甲方")
+        for alias in _PARTY_ROLE_ALIASES:
+            if val.endswith(alias):
+                val = val[: -len(alias)].strip(" 　:：、（）()【】[]")
+        cleaned = val.strip("【】[]（）() 　:：")
+        # Reject clearly-not-a-name patterns: checkbox markers, sentence chars, page numbers
+        if not cleaned or len(cleaned) < 2:
+            continue
+        if any(ch in cleaned for ch in "□☑■◇◆。；;"):
+            continue
+        # Reject signature-page placeholders without real content
+        if cleaned in {"盖章", "签名", "签章", "签字", "印章", "公章"}:
+            continue
+        # Reject overly long matches and template-instruction false hits.
+        # Real party names are rarely > 40 chars; longer values almost always
+        # come from a regex that swallowed an explanation sentence such as
+        # "本合同书适用于一方当事人（受托方）以技术知识为另一方".
+        if len(cleaned) > 40:
+            continue
+        _TEMPLATE_NOISE = (
+            "本合同书", "合同当事人", "示范文本", "适用于", "印制",
+            "增页", "另行约定", "组成部分", "可推介", "无需填写",
+        )
+        if any(noise in cleaned for noise in _TEMPLATE_NOISE):
+            continue
+        # PDF text extraction often inserts spaces inside CJK names ("华为技术
+        # 有限公 司"). If the value is dominated by CJK characters, drop all
+        # internal whitespace so downstream QCC matching works.
+        cjk = sum(1 for c in cleaned if "\u4e00" <= c <= "\u9fff")
+        non_space = [c for c in cleaned if not c.isspace()]
+        if non_space and cjk / max(len(non_space), 1) >= 0.6:
+            cleaned = "".join(non_space)
+        return cleaned
     return ""
