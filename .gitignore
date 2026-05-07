@@ -23,3 +23,15 @@ env/
 Thumbs.db
 .idea/
 .vscode/
+
+# LaTeX build intermediates (keep .tex and .pdf, drop the rest)
+*.aux
+*.toc
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.lof
+*.lot

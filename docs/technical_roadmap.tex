@@ -1,0 +1,511 @@
+% !TEX program = xelatex
+% Compile with: latexmk -xelatex -interaction=nonstopmode technical_roadmap.tex
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{xeCJK}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage[hyphens]{url}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usepackage{caption}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,backgrounds,calc}
+
+% --- 中文字体（Windows 默认有 Microsoft YaHei / SimSun；Linux 可换 Noto） ---
+\IfFontExistsTF{Microsoft YaHei}{%
+  \setCJKmainfont[BoldFont={SimHei},ItalicFont={KaiTi}]{SimSun}
+  \setCJKsansfont{Microsoft YaHei}
+  \setCJKmonofont{NSimSun}
+}{%
+  \setCJKmainfont[BoldFont={Noto Sans CJK SC Bold}]{Noto Serif CJK SC}
+  \setCJKsansfont{Noto Sans CJK SC}
+  \setCJKmonofont{Noto Sans Mono CJK SC}
+}
+
+% --- Layout ---
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5em}
+\linespread{1.18}
+
+\titleformat{\section}{\Large\bfseries\sffamily}{\thesection.}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\sffamily}{\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\sffamily}{\thesubsubsection}{0.4em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small contract-review-openclaw}
+\fancyhead[R]{\small 技术路线 v1.1}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+
+\hypersetup{%
+  colorlinks=true,
+  linkcolor={black!75},
+  urlcolor={blue!55!black},
+  citecolor={black!75},
+  pdftitle={contract-review-openclaw 技术路线},
+  pdfauthor={liangch97},
+}
+
+% --- listings 中文友好 ---
+\definecolor{codebg}{RGB}{248,248,250}
+\definecolor{codecmt}{RGB}{106,153,85}
+\definecolor{codekw}{RGB}{0,90,156}
+\definecolor{codestr}{RGB}{163,21,21}
+
+\lstdefinestyle{plain}{%
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{black!18},
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  xleftmargin=6pt,
+  xrightmargin=6pt,
+  literate={─}{{-}}1 {└}{{|-}}1 {├}{{|-}}1 {│}{{|}}1 {一}{{一}}1 {二}{{二}}1 {三}{{三}}1
+}
+\lstdefinestyle{py}{style=plain,language=Python,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecmt}\itshape,
+  stringstyle=\color{codestr}}
+\lstdefinestyle{json}{style=plain,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecmt}\itshape,
+  stringstyle=\color{codestr}}
+\lstdefinestyle{shell}{style=plain,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecmt}\itshape}
+\lstset{style=plain}
+
+\title{\vspace{-1.4cm}\textbf{contract-review-openclaw 技术路线}\\[2pt]
+  \large 形式化审核流水线 \quad 范式合同对照 skill 嵌入 \quad 双门槛范本匹配器}
+\author{liangch97}
+\date{2026-05-07 \quad v1.1}
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+\begin{abstract}\noindent
+本文档描述 \texttt{contract-review-openclaw-portable} 的技术路线，涵盖从合同输入
+到行政 PDF 输出的全流程；说明本次（v1.1）把范式合同对照能力拆为独立 OpenClaw
+skill 的设计动机与具体方案；给出范本匹配器从「单一形状相似度」升级为
+「形状 $+$ 锚点」双门槛后的判定逻辑、阈值取值和回归验证结果。文末附上后续
+迭代规划。
+\end{abstract}
+
+\tableofcontents
+\vspace{0.5em}
+
+% =============================================================
+\section{背景与目标}
+
+中山大学横向科研合同的形式化审核长期存在两类问题：
+
+\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{形式化检查的覆盖度}：行政老师手工核对甲方信息、关键条款、知识
+    产权归属、保密期限等，工作量大且容易疏漏。
+  \item \textbf{学校范本符合性}：中山大学发布了多份合同范本（技术开发委托、
+    技术服务、技术咨询、专利技术转让、共同申请专利等），实际签订的合同与范本
+    的偏离程度需要逐条比对。
+\end{enumerate}
+
+\texttt{contract-review-openclaw-portable} 是面向 OpenClaw 平台的本地包，目标
+是让\textbf{行政老师只在 IM 中发一句话 + 一个合同附件}就拿到一份可直接转发的
+\emph{行政版 PDF 报告}，包含：
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item 形式化审核结论（基本可审 / 建议修改 / 存在重大问题）。
+  \item 关键问题清单与所对应合同条款 / 证据。
+  \item 甲方企业核验结果（企查查 / 人工材料 / 未完成核验）。
+  \item 知识产权归属与背景知识产权使用安排。
+  \item \textbf{学校范本对照}：是否基于学校范本，偏离了哪些条款。
+\end{itemize}
+
+% =============================================================
+\section{整体架构}
+
+\subsection{从一句话请求到行政 PDF}
+
+图~\ref{fig:overall} 给出端到端流水线。所有模块均位于本地 OpenClaw / WSL，
+无外部 LLM 调用，企查查访问受用户控制（扫码登录或本机会话复用）。
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=10pt and 14pt,
+  every node/.style={font=\small},
+  box/.style={draw,rounded corners=2pt,thick,minimum width=2.6cm,
+              minimum height=0.85cm,align=center,fill=white},
+  data/.style={draw,thick,fill=black!4,minimum width=2.6cm,
+               minimum height=0.85cm,align=center},
+  skill/.style={draw,thick,fill=blue!8,minimum width=3.4cm,
+                minimum height=0.85cm,align=center},
+  outbox/.style={draw,thick,fill=green!8,minimum width=2.8cm,
+                 minimum height=0.85cm,align=center},
+  arr/.style={-{Latex[length=2.6mm]},thick}
+]
+\node[skill] (s1)  {OpenClaw skill\\\texttt{contract-formal-review-flow}};
+\node[box,below=of s1] (full)  {\texttt{full\_qcc\_review.py}\\包装器};
+\node[box,below=of full] (run) {\texttt{run\_contract\_review.py}\\本地命令行};
+
+\node[box,right=2.4cm of full] (qcc) {QCC 扫码 /\\本机会话复用};
+\node[box,below=of run] (load)  {\texttt{contract\_loader.py}};
+\node[box,below=of load] (ext)  {\texttt{contract\_extractor.py}};
+\node[box,below=of ext]  (tm)   {\texttt{template\_matcher.py}\\双门槛};
+\node[box,below=of tm]   (rule) {\texttt{contract\_rule\_checker.py}};
+\node[box,below=of rule] (rep)  {\texttt{contract\_report\_writer.py}};
+
+\node[data,right=2.4cm of ext]  (jdata)  {\texttt{contract\_findings\_*.json}\\含 \texttt{template\_match}};
+\node[skill,right=2.4cm of tm]  (s2)     {OpenClaw skill\\\texttt{contract-template-compliance}};
+\node[outbox,right=2.4cm of rule]  (pdf)    {行政版 PDF};
+\node[outbox,right=2.4cm of rep]   (mdxlsx) {Markdown + Excel};
+
+\draw[arr] (s1) -- (full);
+\draw[arr] (full) -- (run);
+\draw[arr] (full) -- (qcc);
+\draw[arr] (run) -- (load);
+\draw[arr] (load) -- (ext);
+\draw[arr] (ext) -- (tm);
+\draw[arr] (tm) -- (rule);
+\draw[arr] (rule) -- (rep);
+
+\draw[arr] (rep) -- (mdxlsx);
+\draw[arr] (rule) -- (pdf);
+\draw[arr,dashed] (ext) -- (jdata);
+\draw[arr,dashed] (tm)  -- (jdata);
+\draw[arr,dashed] (jdata) -- (s2);
+
+\end{tikzpicture}
+\caption{端到端流水线：两个并列 skill、一条管线、一份 PDF。}
+\label{fig:overall}
+\end{figure}
+
+\subsection{两个 skill 的分工}
+
+\textbf{设计原则}：每个 OpenClaw skill 单一职责、$\le$ 5 KB description；当一个
+skill 的 \texttt{SKILL.md} 体量超过 15 KB 或 covering 5+ 异构工作流时，模型
+attention 会被稀释、出现遗忘和混淆。本项目在 v1.1 迭代前正是因为把范本对照
+说明塞进主 skill，导致 \texttt{SKILL.md} 涨到 22 KB / 277 行，并发触发了
+「忘记 IM 模式回复结构」「忘记调用 template-match」等 skill 把握能力下降的现象。
+
+\begin{longtable}{p{4.6cm} p{3.3cm} p{6.8cm}}
+\toprule
+\textbf{Skill} & \textbf{规模} & \textbf{职责} \\ \midrule
+\endhead
+\texttt{contract-formal-review-flow} & 11.4 KB / 214 行
+& 形式化审核默认入口；执行规则、IM 模式、最终回复结构、知识产权摘要规则；
+  \emph{不}重述范本对照逻辑。 \\
+\texttt{contract-template-compliance} & 7.2 KB / 99 行
+& 范式合同对照专家：读取 \texttt{template\_match} 字段并产出范本符合性结论；
+  \emph{不}独立运行任何脚本。 \\
+\bottomrule
+\end{longtable}
+
+% =============================================================
+\section{核心流水线}
+
+\subsection{合同读取（\texttt{contract\_loader.py}）}
+
+支持 \texttt{.docx} / \texttt{.pdf} / \texttt{.txt}，优先 \texttt{.docx}。
+\texttt{.docx} 路径会读取：
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item 正文段落 \texttt{paragraphs}
+  \item 表格内容（含合并单元格按 \texttt{|} 拼接）
+  \item Word 批注 \texttt{word/comments.xml}
+  \item 高亮样式 \texttt{w:highlight}
+\end{itemize}
+
+输出 \texttt{ordered\_blocks}（按文档顺序的段落 / 表格混合块）+ \texttt{full\_text}。
+
+\subsection{字段抽取（\texttt{contract\_extractor.py}）}
+
+v1.1 在抽取层做了三件事：
+
+\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{放宽标题正则}。原 \texttt{HEADING\_RE} 只匹配 \texttt{第 X 条} /
+    阿拉伯数字 /\texttt{附件}；新增对 \texttt{一、} /\texttt{（一）} /
+    \texttt{第一部分} 等编号的支持，覆盖 SYSU 范本的「使用说明」编号。
+  \item \textbf{党事方角色别名}。原代码只识别 \texttt{甲方} /\texttt{乙方}；
+    范本里大量使用 \emph{委托方} /\emph{受托方} /\emph{转让方} /\emph{受让方} /
+    \emph{需求方} /\emph{服务方} /\emph{合作方} /\emph{供方}，因此引入
+    \texttt{\_PARTY\_ROLE\_ALIASES} 把它们映射到 \texttt{甲} /\texttt{乙}
+    抽取槽位。
+  \item \textbf{接入范本匹配器}。\texttt{\_detect\_template\_match\_safe} 包
+    装异常并返回 \texttt{\{matched: False, error: ...\}}，把
+    \texttt{template\_match} 写入 \texttt{extracted}。
+\end{enumerate}
+
+\subsection{规则引擎（\texttt{contract\_rule\_checker.py}）}
+
+规则文件 \texttt{references/rules/horizontal\_contract\_formal\_rules.yaml}，
+按严重度分三级：
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \texttt{enforce}：自动可判定的硬性风险（如金额未填、知识产权归属缺失）。
+  \item \texttt{review}：需要人工确认的事项（如保密期限是否合规）。
+  \item \texttt{not\_checked}：仅作记录，\textbf{不}计入风险数。
+\end{itemize}
+
+\subsection{报告写出（\texttt{contract\_report\_writer.py}）}
+
+输出三件套：\texttt{contract\_review.md}（行政摘要）、\texttt{contract\_findings\_<hash>.json}
+（结构化结果，含 \texttt{template\_match}、\texttt{summary\_stats}、\texttt{findings}）、
+\texttt{合同形式化审核总表.xlsx}。
+
+经 \texttt{full\_qcc\_review.py} 触发时，额外渲染并通过飞书推送
+\texttt{合同审核报告\_行政版.pdf}（即行政老师拿到的最终交付物）。
+
+% =============================================================
+\section{范本匹配器：从单门槛到双门槛}
+
+\subsection{问题}
+
+v1.0 的 \texttt{template\_matcher.py} 用 \texttt{difflib.SequenceMatcher} 直接
+对「合同正文 vs 范本正文（去波动 token 后）」算相似度，超过
+$\theta_{\text{shape}}=0.40$ 即判定为「基于学校范本」。
+
+\textbf{失败案例}（反例）：行业起草的技术服务合同，乙方为中山大学。该合同与
+\texttt{中山大学技术服务合同.docx} 共享大量套话（甲乙方、知识产权、保密、违约
+责任、争议解决），但其余条款完全是行业自己的。结果：
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item 实测相似度 $\approx 0.56$，被误判为「基于学校范本」。
+  \item 行政 PDF 的「三、学校范本对照」一节里凭空冒出 28 个 \texttt{removed}、
+    32 个 \texttt{added}（来自范本前置「使用说明」段被切成条款的噪声）。
+\end{itemize}
+
+\subsection{双门槛设计}
+
+新版判定要求\textbf{形状信号与内容信号同时通过}：
+
+\begin{equation}\label{eq:gate}
+\text{matched} \;=\;
+\bigl(s_\text{best} \ge \theta_\text{shape}\bigr)
+\;\wedge\;
+\bigl(\#\text{anchor}_\text{contract} \ge k_\text{anchor}\bigr)
+\end{equation}
+
+其中：
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item $s_\text{best}=\max_T \text{Ratio}\bigl(\sigma(C),\sigma(T)\bigr)$，
+    $C$ 是合同文本、$T$ 是范本文本、$\sigma$ 是
+    \texttt{\_strip\_volatile}（清掉日期 / 金额 / 占位符等易变 token）。
+  \item $\theta_\text{shape}=0.65$（v1.0 是 0.40；v1.1 抬高 25 个百分点，
+    在反例 0.56 与正例 1.00 之间稳定区分）。
+  \item \texttt{anchor} 集为\textbf{学校范本独有}的短语集合（见
+    表~\ref{tab:anchors}），$k_\text{anchor}=1$。
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{SYSU 范本独有锚点短语（v1.1）}\label{tab:anchors}
+\begin{tabular}{p{8.0cm} p{6.0cm}}
+\toprule
+\textbf{保留（独有）} & \textbf{已剔除（中性 / 误导）} \\ \midrule
+\texttt{【科学研究院】} & \texttt{中山大学} \\
+\texttt{【科研管理部门】} & \texttt{中大} \\
+\texttt{学校合同管理信息系统} & \texttt{示范文本} \\
+\texttt{合同管理信息系统} & \\
+\texttt{中山大学·深圳} / \texttt{中山大学•深圳} / \texttt{中山大学∙深圳} & \\
+\texttt{本合同由【科学研究院】} & \\
+\texttt{本合同由【科研管理部门】} & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{为何剔除 \texttt{中山大学} / \texttt{示范文本} / \texttt{中大}}？
+中大经常作为乙方出现在行业自拟合同中（这只能说明合同的乙方是中大，并不意味着
+合同采用了\emph{学校范本}）；\texttt{示范文本} 还会出现在国家科技部范本里。
+这三个短语没有判别力，必须移出锚点集合。
+
+\subsection{使用说明剥离（\texttt{\_strip\_preamble}）}
+
+SYSU 范本 \texttt{.docx} 起始处有一段「使用说明」，编号为
+\texttt{一、二、三、…七、}，解释如何填写范本。这些不是真正的合同条款，会在
+逐条 diff 时产生大量 \texttt{removed} / \texttt{added} 噪声。
+
+实现策略：当文本中存在 \texttt{第 N 条} 时，丢弃第一处 \texttt{第 N 条} 之前
+的所有行；否则保留原文（避免误删纯条目式合同）。
+
+\subsection{决策结果与回归验证}
+
+实测两个样例（通过 \texttt{run\_contract\_review.py} 全流水线）：
+
+\begin{longtable}{p{4.0cm} p{1.2cm} p{1.4cm} p{1.4cm} p{6.4cm}}
+\toprule
+\textbf{案例} & \textbf{matched} & \textbf{相似度} & \textbf{anchor 命中}
+& \textbf{结论} \\ \midrule
+\endhead
+反例 \texttt{PCDW\_neg.docx}（行业自拟、乙方为中大）
+& False & 0.41 & 0
+& \texttt{non\_template\_contract: similarity\_0.41<0.65 and anchors\_0<1} \\
+正例 \texttt{zhuanli\_pos.docx}（基于专利转让范本）
+& True & 0.95 & 5
+& 匹配《中山大学专利技术转让合同.docx》；未改动 38 / 修改 9 / 改写 5 /
+  新增 2 / 删除 7 \\
+\bottomrule
+\end{longtable}
+
+% =============================================================
+\section{Skill 拆分细节}
+
+\subsection{\texttt{contract-formal-review-flow}（v1.1 精简版）}
+
+主入口 skill。\textbf{保留}：
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item 强制执行规则（每次必须重跑脚本、不输出文本摘要、单条飞书回复等）。
+  \item 禁用响应表（含「未收到附件」「请告诉我您的称呼」等典型错误）。
+  \item IM 模式默认命令 \texttt{python3 /root/full\_qcc\_review.py "<path>"}。
+  \item 最终回复 7 节结构（含「学校范本对照」一节，但只占一句话）。
+  \item 知识产权摘要规则。
+\end{itemize}
+
+\textbf{外移}至 \texttt{references/handoff/qcc\_and\_arkclaw.md}：QCC 二维码登录
+demo、ArkClaw 连接器输出清单、本地浏览器会话复用细节。
+
+\textbf{YAML \texttt{description}}：双引号字符串，规避 \texttt{:\ } 触发的
+mapping 歧义。
+
+\subsection{\texttt{contract-template-compliance}（v1.1 新建）}
+
+\textbf{触发词}：范本 / 范式 / 示范文本 / 学校范本 / 中大范本 / 范本对照 /
+模板对照 / 条款偏离 / template compliance / clause deviation。
+
+\textbf{决策规则}（必须三选一）：
+
+\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
+  \item $\texttt{matched}=\text{False}$：「本合同不是基于中山大学合同范本起草，
+    按通用横向合同审核要点审查」。
+  \item $\texttt{matched}=\text{True} \wedge \texttt{modified\_count}=0$：
+    「与学校范本《\texttt{<name>}》一致，无条款偏离」。
+  \item $\texttt{matched}=\text{True} \wedge \texttt{modified\_count}>0$：
+    给出范本名 + 偏离统计 + 重点偏离条款表（按 \texttt{diff\_ratio} 升序最多 6 条）。
+\end{enumerate}
+
+\textbf{禁止行为}：
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item 在 \texttt{matched=False} 时列「范本对照表」。
+  \item 仅凭乙方是「中山大学」就声称采用了学校范本。
+  \item 把 \texttt{template\_match.reason} 字段（含英文）原样贴给老师。
+  \item 直接显示英文 status（应映射为「未改动 / 有修改 / 重大改写 /
+    合同新增 / 范本中存在但合同未见」）。
+\end{itemize}
+
+\subsection{\texttt{template\_match} 数据契约}
+
+\begin{lstlisting}[style=json,caption={\texttt{template\_match} 字段（v1.1）}]
+{
+  "matched": true,
+  "template_name": "中山大学专利技术转让合同.docx",
+  "similarity": 0.947,
+  "anchor_hits": 5,
+  "anchor_min": 1,
+  "match_threshold": 0.65,
+  "templates_considered": [...],
+  "reason": null,
+  "clauses": [
+    {
+      "id": "第三条",
+      "title": "...",
+      "status": "modified",
+      "diff_ratio": 0.72,
+      "template_excerpt": "...",
+      "contract_excerpt": "..."
+    }
+  ],
+  "counts": {"unchanged": 38, "modified": 9, "rewritten": 5,
+             "added": 2, "removed": 7},
+  "modified_count": 23,
+  "summary": "匹配范本：…（相似度 95%，命中范本特征 5 项）；…"
+}
+\end{lstlisting}
+
+% =============================================================
+\section{部署与运维}
+
+\subsection{安装}
+
+\begin{lstlisting}[style=shell]
+# 1. 克隆仓库
+git clone https://github.com/liangch97/verifyAgent.git
+cd verifyAgent
+
+# 2. Python 依赖
+pip install -r requirements.txt
+
+# 3. 安装两个 skill 到 ~/.openclaw/skills/
+python install_into_openclaw.py
+\end{lstlisting}
+
+\subsection{回归}
+
+\begin{lstlisting}[style=shell]
+# 范本匹配器单元
+python3 _diag_template_match.py
+python3 _diag_anchors.py
+python3 _diag_clauses.py
+
+# Skill 元数据 + 匹配器联合
+python3 _smoketest_skills.py
+
+# 端到端流水线
+python3 _e2e_template.py
+\end{lstlisting}
+
+\subsection{回滚}
+
+如需回滚到 v1.0 的整段 SKILL.md：
+
+\begin{lstlisting}[style=shell]
+cp ~/.openclaw/skills/contract-formal-review-flow/SKILL.md.preTemplateSplit.bak \
+   ~/.openclaw/skills/contract-formal-review-flow/SKILL.md
+rm -rf ~/.openclaw/skills/contract-template-compliance
+\end{lstlisting}
+
+% =============================================================
+\section{后续迭代规划}
+
+\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{语义化范本匹配}：在 \texttt{template\_matcher.py} 中加入条款级
+    embedding（如 BGE-small-zh）做「语义相似度」与现有形状相似度的融合，进一
+    步降低边缘案例（相似度 0.55$\sim$0.65）的误判风险。
+  \item \textbf{条款级建议生成}：把 \texttt{clauses[].status=rewritten} 的条款
+    交给规则引擎做二次审查，生成针对性的修改建议。
+  \item \textbf{多范本组合}：支持「主范本 + 附加条款范本」的组合识别（如
+    专利技术转让 + 共同申请专利的复合合同）。
+  \item \textbf{打分一致性测试}：构造 30+ 条「微改写」/「重命名甲乙方」/
+    「调整条款顺序」的合成样本，回归确保 \texttt{counts} 的稳定性。
+  \item \textbf{Skill 元数据校验}：把 \texttt{install\_into\_openclaw.py} 加上
+    YAML 解析 + \texttt{description} 长度 / 触发词覆盖度的预检，避免装入
+    破损的 SKILL.md。
+\end{enumerate}
+
+% =============================================================
+\section*{附录 A：版本要点}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{v1.0}（2026-04）：单 skill；范本匹配器单门槛 $\theta=0.40$。
+  \item \textbf{v1.1}（2026-05）：双 skill 拆分；匹配器升级为
+    形状 $+$ 锚点双门槛；外移 QCC / ArkClaw 长篇手册；新增 CHANGELOG。
+\end{itemize}
+
+\end{document}
