@@ -1,5 +1,6 @@
 % !TEX program = xelatex
-% Compile with: latexmk -xelatex -interaction=nonstopmode technical_roadmap.tex
+% Compile: latexmk -xelatex -interaction=nonstopmode technical_roadmap.tex
+%        or:  xelatex technical_roadmap.tex   (run twice for cross-references)
 \documentclass[11pt,a4paper]{article}
 
 \usepackage[a4paper,margin=2.4cm]{geometry}
@@ -35,7 +36,7 @@
 % --- Layout ---
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.5em}
-\linespread{1.18}
+\linespread{1.2}
 
 \titleformat{\section}{\Large\bfseries\sffamily}{\thesection.}{0.6em}{}
 \titleformat{\subsection}{\large\bfseries\sffamily}{\thesubsection}{0.5em}{}
@@ -44,7 +45,7 @@
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[L]{\small contract-review-openclaw}
-\fancyhead[R]{\small 技术路线 v1.1}
+\fancyhead[R]{\small 项目技术路线}
 \fancyfoot[C]{\thepage}
 \renewcommand{\headrulewidth}{0.3pt}
 
@@ -53,7 +54,7 @@
   linkcolor={black!75},
   urlcolor={blue!55!black},
   citecolor={black!75},
-  pdftitle={contract-review-openclaw 技术路线},
+  pdftitle={contract-review-openclaw 项目技术路线},
   pdfauthor={liangch97},
 }
 
@@ -64,7 +65,7 @@
 \definecolor{codestr}{RGB}{163,21,21}
 
 \lstdefinestyle{plain}{%
-  basicstyle=\ttfamily\small,
+  basicstyle=\ttfamily\footnotesize,
   backgroundcolor=\color{codebg},
   frame=single,
   framesep=4pt,
@@ -75,8 +76,7 @@
   keepspaces=true,
   showstringspaces=false,
   xleftmargin=6pt,
-  xrightmargin=6pt,
-  literate={─}{{-}}1 {└}{{|-}}1 {├}{{|-}}1 {│}{{|}}1 {一}{{一}}1 {二}{{二}}1 {三}{{三}}1
+  xrightmargin=6pt
 }
 \lstdefinestyle{py}{style=plain,language=Python,
   keywordstyle=\color{codekw}\bfseries,
@@ -86,213 +86,543 @@
   keywordstyle=\color{codekw}\bfseries,
   commentstyle=\color{codecmt}\itshape,
   stringstyle=\color{codestr}}
+\lstdefinestyle{yaml}{style=plain,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecmt}\itshape,
+  stringstyle=\color{codestr}}
 \lstdefinestyle{shell}{style=plain,
   keywordstyle=\color{codekw}\bfseries,
   commentstyle=\color{codecmt}\itshape}
 \lstset{style=plain}
 
-\title{\vspace{-1.4cm}\textbf{contract-review-openclaw 技术路线}\\[2pt]
-  \large 形式化审核流水线 \quad 范式合同对照 skill 嵌入 \quad 双门槛范本匹配器}
+\title{\vspace{-1.4cm}\textbf{contract-review-openclaw}\\[2pt]
+  \large 项目技术路线（whole-project technical roadmap）}
 \author{liangch97}
-\date{2026-05-07 \quad v1.1}
+\date{2026-05-07 \quad 文档版本 v1.1}
 
 \begin{document}
 \maketitle
 \thispagestyle{fancy}
 
 \begin{abstract}\noindent
-本文档描述 \texttt{contract-review-openclaw-portable} 的技术路线，涵盖从合同输入
-到行政 PDF 输出的全流程；说明本次（v1.1）把范式合同对照能力拆为独立 OpenClaw
-skill 的设计动机与具体方案；给出范本匹配器从「单一形状相似度」升级为
-「形状 $+$ 锚点」双门槛后的判定逻辑、阈值取值和回归验证结果。文末附上后续
-迭代规划。
+本文描述 \texttt{contract-review-openclaw} 项目的整体技术路线：从一份合同
+\texttt{.docx} 到行政老师 IM 中收到的 \emph{行政版 PDF 报告} 的端到端管线，
+包括 OpenClaw skill 体系、入口编排、合同读取与字段抽取、规则引擎、
+学校范本对照、企业工商核验、报告渲染与 IM 交付、数据契约与部署形态。
+文档读者：项目维护者、二开者、运维。
 \end{abstract}
 
 \tableofcontents
 \vspace{0.5em}
 
 % =============================================================
-\section{背景与目标}
+\section{项目概述}
 
-中山大学横向科研合同的形式化审核长期存在两类问题：
+\subsection{背景与目标}
+
+中山大学每年签订大量横向科研合同（技术开发、技术服务、技术咨询、技术转让、
+共同申请专利、共同申请专利等），这些合同需要由行政老师做\emph{形式化审核}：
+检查合同要素是否齐全、关键条款是否合规、知识产权归属是否清楚、甲方企业是否
+真实存在等。该过程长期依赖人工逐条比对，工作量大、容易疏漏。
+
+\textbf{contract-review-openclaw} 是面向 OpenClaw 平台的本地包，目标是：
 
 \begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
-  \item \textbf{形式化检查的覆盖度}：行政老师手工核对甲方信息、关键条款、知识
-    产权归属、保密期限等，工作量大且容易疏漏。
-  \item \textbf{学校范本符合性}：中山大学发布了多份合同范本（技术开发委托、
-    技术服务、技术咨询、专利技术转让、共同申请专利等），实际签订的合同与范本
-    的偏离程度需要逐条比对。
+  \item \textbf{IM 一键审核}。行政老师在飞书里发一份合同 + 一句话「请帮我
+    审核这个合同」，自动返回一份可直接转发给项目负责人的\emph{行政版 PDF}。
+  \item \textbf{形式化覆盖}。覆盖 41 条形式化规则，区分自动判定项 / 人工
+    复核项 / 仅留档项。
+  \item \textbf{学校范本对照}。识别合同是否基于中山大学合同范本起草，
+    并指出条款级偏离。
+  \item \textbf{企业工商核验}。通过企查查（QCC）扫码登录获取甲方真实工商
+    信息，与合同抬头比对；无法核验时降级为人工材料路径。
+  \item \textbf{本地优先 / 离线可用}。所有审核逻辑跑在本地，不依赖外部
+    LLM；企查查访问全程由用户控制。
 \end{enumerate}
 
-\texttt{contract-review-openclaw-portable} 是面向 OpenClaw 平台的本地包，目标
-是让\textbf{行政老师只在 IM 中发一句话 + 一个合同附件}就拿到一份可直接转发的
-\emph{行政版 PDF 报告}，包含：
+\subsection{用户与角色}
 
-\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item 形式化审核结论（基本可审 / 建议修改 / 存在重大问题）。
-  \item 关键问题清单与所对应合同条款 / 证据。
-  \item 甲方企业核验结果（企查查 / 人工材料 / 未完成核验）。
-  \item 知识产权归属与背景知识产权使用安排。
-  \item \textbf{学校范本对照}：是否基于学校范本，偏离了哪些条款。
+\begin{longtable}{p{2.6cm} p{12.8cm}}
+\toprule
+\textbf{角色} & \textbf{典型动作} \\ \midrule
+\endhead
+\textbf{行政老师} & 在飞书里发合同 + 触发指令；阅读最终 PDF；转发给项目
+负责人 / 合作方修改。\textbf{不需要}理解 JSON、规则编号或脚本。 \\
+\textbf{二开 / 测试} & 在 PowerShell / Bash 里跑 \texttt{run\_contract\_review.py}
+做批量回归；维护 \texttt{horizontal\_contract\_formal\_rules.yaml}；
+新增范本时复制 \texttt{.docx} 到 \texttt{references/templates/}。 \\
+\textbf{运维} & 部署 OpenClaw / WSL；维护飞书凭据；监控
+\texttt{output/im\_review/<timestamp>/} 的实际推送。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{安全与边界}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{不调用外部 LLM}。所有规则匹配、字段抽取、范本对比均为
+    本地代码（正则 + \texttt{python-docx} + \texttt{difflib}）。
+  \item \textbf{不绕过任何访问控制}。企查查走标准浏览器访问；遇到验证码、
+    WAF、登录失败、付费墙时主动降级到「人工材料 / 退回普通审核」。
+  \item \textbf{企业信息白名单}。甲方信息只能来自三种受控来源：本次 QCC
+    扫码、人工 \texttt{--company-check} 文件、用户提供的截图 / 记录。
+    不允许从模型记忆或公开知识填充。
+  \item \textbf{结果可解释}。每条 finding 必须给出 \texttt{rule\_id} +
+    \texttt{evidence} + \texttt{location}；最终面向老师的 PDF 隐去技术名词，
+    按「问题 / 关联条款 / 建议处理」三列展示。
 \end{itemize}
 
 % =============================================================
-\section{整体架构}
+\section{系统架构总览}
 
-\subsection{从一句话请求到行政 PDF}
+\subsection{端到端管线}
 
-图~\ref{fig:overall} 给出端到端流水线。所有模块均位于本地 OpenClaw / WSL，
-无外部 LLM 调用，企查查访问受用户控制（扫码登录或本机会话复用）。
+图~\ref{fig:overall} 给出从用户触发到 PDF 推送的完整数据流。
 
 \begin{figure}[h]
 \centering
 \begin{tikzpicture}[
   node distance=10pt and 14pt,
-  every node/.style={font=\small},
-  box/.style={draw,rounded corners=2pt,thick,minimum width=2.6cm,
-              minimum height=0.85cm,align=center,fill=white},
-  data/.style={draw,thick,fill=black!4,minimum width=2.6cm,
+  every node/.style={font=\footnotesize},
+  user/.style={draw,thick,fill=orange!12,rounded corners=4pt,
+               minimum width=2.6cm,minimum height=0.85cm,align=center},
+  skill/.style={draw,thick,fill=blue!10,rounded corners=2pt,
+                minimum width=3.4cm,minimum height=0.85cm,align=center},
+  wrap/.style={draw,thick,fill=violet!8,rounded corners=2pt,
+               minimum width=3.4cm,minimum height=0.85cm,align=center},
+  pipe/.style={draw,thick,fill=white,minimum width=3.4cm,
                minimum height=0.85cm,align=center},
-  skill/.style={draw,thick,fill=blue!8,minimum width=3.4cm,
-                minimum height=0.85cm,align=center},
-  outbox/.style={draw,thick,fill=green!8,minimum width=2.8cm,
-                 minimum height=0.85cm,align=center},
+  data/.style={draw,thick,fill=black!4,minimum width=3.4cm,
+               minimum height=0.85cm,align=center},
+  outbox/.style={draw,thick,fill=green!10,rounded corners=4pt,
+                 minimum width=3.4cm,minimum height=0.85cm,align=center},
   arr/.style={-{Latex[length=2.6mm]},thick}
 ]
-\node[skill] (s1)  {OpenClaw skill\\\texttt{contract-formal-review-flow}};
-\node[box,below=of s1] (full)  {\texttt{full\_qcc\_review.py}\\包装器};
-\node[box,below=of full] (run) {\texttt{run\_contract\_review.py}\\本地命令行};
+\node[user]               (u)    {行政老师\\飞书 IM};
+\node[skill, below=of u]  (s1)   {OpenClaw skill\\\texttt{contract-formal-review-flow}};
+\node[wrap,  below=of s1] (full) {\texttt{full\_qcc\_review.py}\\IM 编排器};
+\node[pipe,  below=of full] (qcc) {\texttt{demos/qcc\_login\_demo.py}\\Playwright 浏览器};
+\node[pipe,  below=of qcc]  (run) {\texttt{run\_contract\_review.py}\\本地 CLI 入口};
+\node[pipe,  below=of run]  (load){\texttt{contract\_loader.py}};
+\node[pipe,  below=of load] (ext) {\texttt{contract\_extractor.py}};
+\node[pipe,  below=of ext]  (tm)  {\texttt{template\_matcher.py}};
+\node[pipe,  below=of tm]   (rule){\texttt{contract\_rule\_checker.py}};
+\node[pipe,  below=of rule] (rep) {\texttt{contract\_report\_writer.py}};
+\node[wrap,  below=of rep]  (adm) {\texttt{admin\_report.py}\\PDF 渲染器};
 
-\node[box,right=2.4cm of full] (qcc) {QCC 扫码 /\\本机会话复用};
-\node[box,below=of run] (load)  {\texttt{contract\_loader.py}};
-\node[box,below=of load] (ext)  {\texttt{contract\_extractor.py}};
-\node[box,below=of ext]  (tm)   {\texttt{template\_matcher.py}\\双门槛};
-\node[box,below=of tm]   (rule) {\texttt{contract\_rule\_checker.py}};
-\node[box,below=of rule] (rep)  {\texttt{contract\_report\_writer.py}};
+\node[skill, right=2.6cm of full] (s2) {OpenClaw skill\\\texttt{contract-template-compliance}};
+\node[data,  right=2.6cm of ext]  (extr){\texttt{extracted}\\(JSON in-memory)};
+\node[data,  right=2.6cm of tm]   (tmd) {\texttt{template\_match}\\block};
+\node[data,  right=2.6cm of rule] (rev) {\texttt{review} \\\texttt{contract\_findings.json}};
+\node[outbox,right=2.6cm of rep]  (mdxlsx){Markdown + Excel};
+\node[outbox,right=2.6cm of adm]  (pdf) {行政版 PDF\\飞书推送};
 
-\node[data,right=2.4cm of ext]  (jdata)  {\texttt{contract\_findings\_*.json}\\含 \texttt{template\_match}};
-\node[skill,right=2.4cm of tm]  (s2)     {OpenClaw skill\\\texttt{contract-template-compliance}};
-\node[outbox,right=2.4cm of rule]  (pdf)    {行政版 PDF};
-\node[outbox,right=2.4cm of rep]   (mdxlsx) {Markdown + Excel};
-
-\draw[arr] (s1) -- (full);
-\draw[arr] (full) -- (run);
+\draw[arr] (u)    -- (s1);
+\draw[arr] (s1)   -- (full);
 \draw[arr] (full) -- (qcc);
-\draw[arr] (run) -- (load);
+\draw[arr] (full) -- (run);
+\draw[arr] (run)  -- (load);
 \draw[arr] (load) -- (ext);
-\draw[arr] (ext) -- (tm);
-\draw[arr] (tm) -- (rule);
+\draw[arr] (ext)  -- (tm);
+\draw[arr] (tm)   -- (rule);
 \draw[arr] (rule) -- (rep);
+\draw[arr] (rep)  -- (adm);
 
+\draw[arr,dashed] (ext)  -- (extr);
+\draw[arr,dashed] (tm)   -- (tmd);
+\draw[arr,dashed] (rule) -- (rev);
+\draw[arr,dashed] (tmd)  -- (s2);
 \draw[arr] (rep) -- (mdxlsx);
-\draw[arr] (rule) -- (pdf);
-\draw[arr,dashed] (ext) -- (jdata);
-\draw[arr,dashed] (tm)  -- (jdata);
-\draw[arr,dashed] (jdata) -- (s2);
-
+\draw[arr] (adm) -- (pdf);
+\draw[arr] (pdf) to [bend right=20] (u);
 \end{tikzpicture}
-\caption{端到端流水线：两个并列 skill、一条管线、一份 PDF。}
+\caption{端到端管线（蓝=skill，紫=外置编排，白=管线模块，灰=数据，绿=最终交付物）。}
 \label{fig:overall}
 \end{figure}
 
-\subsection{两个 skill 的分工}
+\subsection{组件清单}
 
-\textbf{设计原则}：每个 OpenClaw skill 单一职责、$\le$ 5 KB description；当一个
-skill 的 \texttt{SKILL.md} 体量超过 15 KB 或 covering 5+ 异构工作流时，模型
-attention 会被稀释、出现遗忘和混淆。本项目在 v1.1 迭代前正是因为把范本对照
-说明塞进主 skill，导致 \texttt{SKILL.md} 涨到 22 KB / 277 行，并发触发了
-「忘记 IM 模式回复结构」「忘记调用 template-match」等 skill 把握能力下降的现象。
+按角色把仓库划分为五层：
 
-\begin{longtable}{p{4.6cm} p{3.3cm} p{6.8cm}}
+\begin{longtable}{p{3.0cm} p{3.6cm} p{8.6cm}}
 \toprule
-\textbf{Skill} & \textbf{规模} & \textbf{职责} \\ \midrule
+\textbf{层级} & \textbf{目录 / 文件} & \textbf{职责} \\ \midrule
 \endhead
-\texttt{contract-formal-review-flow} & 11.4 KB / 214 行
-& 形式化审核默认入口；执行规则、IM 模式、最终回复结构、知识产权摘要规则；
-  \emph{不}重述范本对照逻辑。 \\
-\texttt{contract-template-compliance} & 7.2 KB / 99 行
-& 范式合同对照专家：读取 \texttt{template\_match} 字段并产出范本符合性结论；
-  \emph{不}独立运行任何脚本。 \\
+1. 入口 & \texttt{run\_contract\_review.py} & 本地 CLI 入口（Argparse）。 \\
+1. 入口 & \texttt{install\_into\_openclaw.py} & 把 \texttt{skills/} 同步到
+\texttt{\textasciitilde/.openclaw/skills/}；写入当前解压目录路径。 \\
+1. 入口（外置）& \texttt{/root/full\_qcc\_review.py} & IM 编排器：QCC →
+抽取 → 审核 → 飞书推 PDF。代码在 OpenClaw 部署目录，不在仓库。 \\ \midrule
+2. Skill & \texttt{skills/contract-formal-review-flow/} & 形式化审核
+默认入口 skill。 \\
+2. Skill & \texttt{skills/contract-template-compliance/} & 范式合同对照
+专家 skill。 \\
+2. Skill & \texttt{openclaw-extensions/contract-review-onboarding/} &
+OpenClaw 引导插件（TS）。 \\ \midrule
+3. 管线 & \texttt{scripts/contract\_loader.py} & 读取 docx/pdf/txt
++ 批注 + 高亮 + 表格。 \\
+3. 管线 & \texttt{scripts/contract\_extractor.py} & 字段抽取（标题、
+项目名、金额、党事方、抬头等）。 \\
+3. 管线 & \texttt{scripts/contract\_rule\_checker.py} & 规则引擎，
+读取 41 条 YAML 规则。 \\
+3. 管线 & \texttt{scripts/contract\_report\_writer.py} & 写出
+Markdown / JSON / Excel 三件套。 \\
+3. 管线 & \texttt{scripts/template\_matcher.py} & 学校范本对照（双门槛）。 \\
+3. 管线 & \texttt{scripts/company\_check\_loader.py} \&
+\texttt{company\_check\_matcher.py} & 加载企业核验材料并与合同甲方匹配。 \\
+3. 管线（外置）& \texttt{/root/admin\_report.py} & 行政 PDF 渲染。 \\ \midrule
+4. 数据 & \texttt{references/rules/horizontal\_contract\_formal\_rules.yaml}
+& 41 条规则。 \\
+4. 数据 & \texttt{references/schemas/*.json} & 三份输出 JSON Schema。 \\
+4. 数据 & \texttt{references/templates/中山大学*.docx} & 6 份学校合同范本
+（部署侧）。 \\
+4. 数据 & \texttt{references/prompts/} & 给老师可复制的提示词模板。 \\
+4. 数据 & \texttt{references/handoff/qcc\_and\_arkclaw.md} & QCC / 飞书
+连接器手册。 \\ \midrule
+5. 演示与测试 & \texttt{demos/qcc\_login\_demo.py} & QCC 二维码登录 demo
+（被 \texttt{full\_qcc\_review.py} 复用）。 \\
+5. 演示与测试 & \texttt{demos/qcc\_contract\_review\_demo.py} & 旧版扫码
++ 审核合一脚本（不推送飞书）。 \\
+5. 演示与测试 & \texttt{tests/} & pytest 测试（规则、抽取、QCC 行为）。 \\
+5. 演示与测试 & \texttt{samples/} & 测试合同。 \\ \midrule
+6. 部署 & \texttt{deployment/arkclaw-global-prompt.md} & 云端 ArkClaw
+全局提示词。 \\
 \bottomrule
 \end{longtable}
 
 % =============================================================
-\section{核心流水线}
+\section{入口层：三种触发方式}
+
+\subsection{IM（飞书）：默认触发}
+
+行政老师对 OpenClaw 说：
+
+\begin{lstlisting}[style=shell]
+请帮我审核这个合同，<合同文件完整路径>
+\end{lstlisting}
+
+OpenClaw 触发 \texttt{contract-formal-review-flow} skill；该 skill 强制要求
+模型只走一条命令：
+
+\begin{lstlisting}[style=shell]
+python3 /root/full_qcc_review.py "<contract_file_path>"
+\end{lstlisting}
+
+\subsubsection{\texttt{full\_qcc\_review.py} 编排器}
+
+外置在 OpenClaw 部署目录的包装器（691 行）。它的责任：
+
+\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{初步推送状态}。\texttt{fs\_text("📋 开始审核\textbackslash n
+    合同: ... 步骤 1/4: 启动 QCC 登录...")}
+  \item \textbf{快速路径检测}。如果检测到飞书凭据缺失或合同名像
+    \emph{已审核报告}（避免对生成的 PDF 再做审核），直接走「无 QCC」
+    路径，跳到第 4 步。
+  \item \textbf{抽取党事方甲方}。\texttt{extract\_party\_a()} 用正则从合同
+    抽出甲方名字；如果用户传了 \texttt{--company-name}，以参数为准。
+  \item \textbf{QCC 扫码登录}。复用 \texttt{demos/qcc\_login\_demo.py} 的
+    Playwright 浏览器；优先复用 \texttt{.browser-profiles/qcc-demo} 的
+    本机会话；失效时通过 \texttt{fs\_image} 把二维码截图推到飞书让老师
+    扫码；最长等 15 分钟。
+  \item \textbf{QCC 公司搜索}。登录成功后搜索甲方公司，截屏，导出
+    \texttt{output/qcc\_login\_demo/company\_check\_draft\_*.json}。
+  \item \textbf{触发本地审核}。\\
+    \texttt{python run\_contract\_review.py "<contract>" --company-check
+    "<draft.json>"}\\
+    生成 Markdown / JSON / Excel 三件套到 \texttt{output/}。
+  \item \textbf{渲染行政 PDF}。导入 \texttt{admin\_report.py}，把
+    \texttt{contract\_findings\_<hash>.json} + Markdown 渲染成
+    \texttt{合同审核报告\_行政版.pdf}（含「三、学校范本对照」一节）。
+  \item \textbf{推送 PDF}。\texttt{fs\_file()} 通过 openclaw-gateway 把
+    PDF 上传到飞书并发给老师。
+  \item \textbf{回归归档}。所有产物落到
+    \texttt{output/im\_review/<timestamp>/} 便于回查。
+\end{enumerate}
+
+\textbf{失败路径}：QCC 验证码 / 405 / 403 / 登录超时 / 浏览器崩溃 / 飞书
+凭据缺失，全部包装为「降级到无 QCC 审核」并在最终 PDF 里写明
+\emph{「外部企业核验未完成，请补充企查查截图或人工核验记录」}。
+
+\subsection{命令行：\texttt{run\_contract\_review.py}}
+
+\begin{lstlisting}[style=shell]
+# 仅本地审核（不查 QCC）
+python run_contract_review.py "<contract.docx>"
+
+# 带人工整理的企业核验材料
+python run_contract_review.py "<contract.docx>" \
+       --company-check "<company_check.json|csv|xlsx>" \
+       --rules <rules.yaml>          # 默认 references/rules/horizontal_*.yaml
+       --output-dir <dir>            # 默认 ./output
+\end{lstlisting}
+
+是 \texttt{full\_qcc\_review.py} 内部也调用的核心入口。返回到 \texttt{stdout}：
+
+\begin{lstlisting}[style=shell]
+[done] decision=基本可审，建议人工复核 confidence=0.72
+[md]   ./output/contract_review.md
+[json] ./output/contract_findings_<hash>.json
+[xlsx] ./output/合同形式化审核总表.xlsx
+\end{lstlisting}
+
+\subsection{Dashboard / Demo：可选}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \texttt{demos/qcc\_login\_demo.py "<company>" --login-only
+    --hold-seconds 900}：仅测试 QCC 二维码登录，保留窗口 15 分钟。
+  \item \texttt{demos/qcc\_contract\_review\_demo.py "<contract>"
+    --reuse-profile}：旧版扫码 + 审核合一脚本，\textbf{不}推送飞书，
+    保留作为离线调试。
+\end{itemize}
+
+% =============================================================
+\section{OpenClaw skill 体系}
+
+\subsection{两个 skill 的分工}
+
+OpenClaw 在解析用户消息时按 skill description 中的触发词激活相应 skill。
+本项目当前提供 \emph{两个并列} skill：
+
+\begin{longtable}{p{4.6cm} p{2.8cm} p{7.5cm}}
+\toprule
+\textbf{Skill} & \textbf{规模} & \textbf{触发词与职责} \\ \midrule
+\endhead
+\texttt{contract-formal-review-flow} & 11.4 KB / 214 行
+& 触发：\emph{合同审核 / 横向合同 / 帮我审核 / 审核这个合同 /
+SYSU contract review}。强制模型只走 \texttt{full\_qcc\_review.py}，
+保证 IM 模式下\textbf{不输出文本摘要}（PDF 即交付）。 \\
+\texttt{contract-template-compliance} & 7.2 KB / 99 行
+& 触发：\emph{范本 / 范式 / 示范文本 / 学校范本 / 范本对照 /
+模板对照 / 条款偏离}。读取 \texttt{template\_match} JSON 字段并产出
+范本符合性结论；不重复执行任何脚本。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{为何要拆 skill}
+
+Anthropic Skills 设计准则之一：\emph{每个 SKILL.md 单一职责，体量 $\le$ 5 KB}。
+当一个 skill 承担多个异构工作流时，模型 attention 被稀释，会出现「忘记
+调用工具」「混淆 IM 模式回复结构」等表现。本项目早期把范本对照塞进
+主 skill 后，主 SKILL.md 涨到 22 KB / 277 行（覆盖 7 类工作流），随即出现
+skill 把握能力下降；v1.1 拆分后恢复正常。
+
+\subsection{安装机制}
+
+\begin{lstlisting}[style=py]
+# install_into_openclaw.py 的核心逻辑
+SOURCE_SKILLS = PROJECT_ROOT / "skills"
+TARGET = Path.home() / ".openclaw" / "skills"
+for skill_dir in SOURCE_SKILLS.iterdir():
+    target_dir = TARGET / skill_dir.name
+    shutil.copytree(skill_dir, target_dir, dirs_exist_ok=True)
+    # 把 SKILL.md 里的 <PROJECT_ROOT> 占位符替换为本机绝对路径
+    skill_md = target_dir / "SKILL.md"
+    skill_md.write_text(
+        skill_md.read_text().replace("<PROJECT_ROOT>", str(PROJECT_ROOT))
+    )
+\end{lstlisting}
+
+换目录或换机器后必须重新执行，因为 \texttt{SKILL.md} 内含「本机解压
+目录」字面量，OpenClaw 模型据此选择脚本路径。
+
+\subsection{Onboarding 插件（TypeScript）}
+
+\texttt{openclaw-extensions/contract-review-onboarding/} 是一个
+OpenClaw dashboard 插件，注册时机：
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \texttt{openclaw.plugin.json} 声明插件入口与名称。
+  \item \texttt{index.ts} 在 dashboard 启动时往侧边栏插一段引导：
+    「从 \texttt{install\_into\_openclaw.py} 安装 skill → 给老师发提示词
+    模板 → 跑一个样例合同」三步走。
+\end{itemize}
+
+% =============================================================
+\section{核心管线}
 
 \subsection{合同读取（\texttt{contract\_loader.py}）}
 
-支持 \texttt{.docx} / \texttt{.pdf} / \texttt{.txt}，优先 \texttt{.docx}。
-\texttt{.docx} 路径会读取：
+\textbf{支持格式}：\texttt{.docx}（首选）/\texttt{.pdf} /\texttt{.txt}。
+
+\textbf{.docx 读取深度}：
 
 \begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item 正文段落 \texttt{paragraphs}
-  \item 表格内容（含合并单元格按 \texttt{|} 拼接）
-  \item Word 批注 \texttt{word/comments.xml}
-  \item 高亮样式 \texttt{w:highlight}
+  \item 正文段落（\texttt{paragraphs}）。
+  \item 表格（\texttt{tables}）：按行用 \texttt{|} 拼接成「行内文本」；
+    合并单元格折叠去重。
+  \item Word 批注：解析 \texttt{word/comments.xml} 拿到 reviewer 评论
+    及其锚点条款（用于规则的 \texttt{reviewer\_comments} 对齐）。
+  \item 高亮文字：\texttt{w:highlight} 样式标注的文字单独留一份
+    \texttt{highlights} 列表，供规则引擎识别老师手动标注的风险点。
 \end{itemize}
 
-输出 \texttt{ordered\_blocks}（按文档顺序的段落 / 表格混合块）+ \texttt{full\_text}。
+\textbf{输出结构}：
+
+\begin{lstlisting}[style=json]
+{
+  "source_file": "<absolute path>",
+  "ordered_blocks": [{"kind": "para"|"table", "text": "..."}],
+  "comments": [{"id": "1", "anchor": "...", "text": "..."}],
+  "highlights": ["..."],
+  "full_text": "<concatenated body text>",
+  "warnings": ["..."]
+}
+\end{lstlisting}
 
 \subsection{字段抽取（\texttt{contract\_extractor.py}）}
 
-v1.1 在抽取层做了三件事：
+15.5 KB / 单文件正则 + 启发式。抽取的核心字段：
 
-\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
-  \item \textbf{放宽标题正则}。原 \texttt{HEADING\_RE} 只匹配 \texttt{第 X 条} /
-    阿拉伯数字 /\texttt{附件}；新增对 \texttt{一、} /\texttt{（一）} /
-    \texttt{第一部分} 等编号的支持，覆盖 SYSU 范本的「使用说明」编号。
-  \item \textbf{党事方角色别名}。原代码只识别 \texttt{甲方} /\texttt{乙方}；
-    范本里大量使用 \emph{委托方} /\emph{受托方} /\emph{转让方} /\emph{受让方} /
-    \emph{需求方} /\emph{服务方} /\emph{合作方} /\emph{供方}，因此引入
-    \texttt{\_PARTY\_ROLE\_ALIASES} 把它们映射到 \texttt{甲} /\texttt{乙}
-    抽取槽位。
-  \item \textbf{接入范本匹配器}。\texttt{\_detect\_template\_match\_safe} 包
-    装异常并返回 \texttt{\{matched: False, error: ...\}}，把
-    \texttt{template\_match} 写入 \texttt{extracted}。
-\end{enumerate}
+\begin{longtable}{p{3.6cm} p{4.0cm} p{7.2cm}}
+\toprule
+\textbf{字段} & \textbf{抽取策略} & \textbf{用途} \\ \midrule
+\endhead
+\texttt{title} & 取前 20 行中含「合同 / 协议 / 技术 / 合作」的最长行 &
+报告标题、QCC 关键词候选 \\
+\texttt{contract\_no} & 「合同编号 / 编号 / 编号：」正则 & 报告抬头 \\
+\texttt{sign\_date} / \texttt{sign\_place} & 「签订日期 / 签署日期 /
+签订地点」正则 & 形式化规则 \\
+\texttt{party\_a\_name} / \texttt{party\_b\_name} &
+\texttt{\_PARTY\_ROLE\_ALIASES}（甲方/委托方/转让方/受让方/受托方/
+合作方/服务方/需求方/供方）映射到 \texttt{甲} / \texttt{乙}，
+再正则取冒号后的非空文本 & QCC 搜索关键词、规则匹配 \\
+\texttt{project\_name} & 标题 + 行内「项目名称」字段 & 报告 \\
+\texttt{contract\_type} & 标题与正文关键词分类（开发 / 服务 / 咨询 /
+转让 / 共同申请专利） & 规则路由（不同合同走不同规则集） \\
+\texttt{amount} & 「金额」/「￥」正则 + 中文大写 & 形式化规则 \\
+\texttt{ip\_provisions} & 「知识产权 / 专利 / 著作权 / 背景知识产权」
+关键词聚合 & 知识产权摘要 \\
+\texttt{template\_match} & 调用 \texttt{template\_matcher.detect\_template\_match}
+（包装在 \texttt{\_detect\_template\_match\_safe} 里） & 范本对照下游消费 \\
+\bottomrule
+\end{longtable}
+
+\textbf{标题正则升级}（v1.1）：原 \texttt{HEADING\_RE} 只识别
+\texttt{第 N 条} / 阿拉伯数字 / \texttt{附件}；扩展后增加
+\texttt{一、} / \texttt{（一）} / \texttt{第一部分} / 阿拉伯数字 +
+\texttt{.} 多级编号，覆盖学校范本的「使用说明」段。
 
 \subsection{规则引擎（\texttt{contract\_rule\_checker.py}）}
 
-规则文件 \texttt{references/rules/horizontal\_contract\_formal\_rules.yaml}，
-按严重度分三级：
+36.2 KB。规则文件
+\texttt{references/rules/horizontal\_contract\_formal\_rules.yaml}
+共 \textbf{41 条} 规则，分布在若干 \texttt{section}（其他条款 / 系统审核要点 /
+党事人信息 / 合同要素 / 知识产权 / 保密 / 违约 / 争议解决 / 经费等）。
+
+\subsubsection{规则字段}
+
+\begin{lstlisting}[style=yaml]
+- id: F4
+  section: 其他条款
+  title: 论文条款合规
+  scope: enforce              # enforce | review | not_checked
+  severity: warn              # block | warn | info
+  source_text: "不得约定代写论文、论文单位或作者排名"
+  comment_guidance: "搜索论文排名关键词"
+  reviewer_comments:
+    - {id: 28, anchor: "...", text: "..."}
+  check_type: forbidden_phrase_any
+  patterns: ["论文排名", "作者排名", "第一作者", "通讯作者",
+             "论文单位", "代写论文", "帮忙写论文", "撰写论文"]
+  message: "检测到疑似不合规论文条款"
+  suggestion: "删除论文代写或作者排名约定"
+\end{lstlisting}
+
+\subsubsection{\texttt{check\_type} 取值与语义}
+
+\begin{longtable}{p{4.6cm} p{10.8cm}}
+\toprule
+\textbf{check\_type} & \textbf{语义} \\ \midrule
+\endhead
+\texttt{party\_name} / \texttt{basic\_parties} & 党事方姓名 / 抬头是否
+完整、非空 \\
+\texttt{contacts\_required} & 联系信息（电话 / 邮箱 / 地址）是否齐全 \\
+\texttt{contact\_email\_domain} & 联系邮箱域名是否合规 \\
+\texttt{phrase\_any} & 命中任一关键词 → 触发 finding \\
+\texttt{forbidden\_phrase\_any} & 命中任一关键词 → 触发\textbf{违规}
+finding（如论文代写） \\
+\texttt{required\_phrase} & 必须出现某条款，否则触发缺失 finding \\
+\texttt{bank\_account} & 收款账户合规检查（账号、户名、行号格式） \\
+\texttt{payment\_first\_installment} & 首付款比例是否合规 \\
+\texttt{performance\_budget} & 绩效与经费比例 \\
+\texttt{ip\_ownership} & 知识产权归属是否清楚 \\
+\texttt{shared\_ip\_distribution} & 共有知识产权份额是否 $\ge 1/N$ \\
+\texttt{confidentiality\_term} & 保密期限合规 \\
+\texttt{review\_only} & 仅人工复核（不参与自动判定） \\
+\texttt{not\_checked} & 仅留档（不计入风险数） \\
+\bottomrule
+\end{longtable}
+
+\subsubsection{决策映射 \texttt{\_map\_decision}}
+
+\begin{equation}\label{eq:decision}
+\text{decision} =
+\begin{cases}
+\text{「存在重大问题，需修改/补充」} & \exists\,f.\text{severity}=\text{block} \\
+\text{「基本可审，建议人工复核」} & \exists\,f \\
+\text{「未发现形式化问题」} & \text{otherwise}
+\end{cases}
+\end{equation}
+
+对应 \texttt{confidence}：$0.9$ / $0.72$ / $0.95$。
+
+\subsubsection{企业核验融合}
+
+当传入 \texttt{company\_check} 参数时，规则引擎额外执行：
 
 \begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item \texttt{enforce}：自动可判定的硬性风险（如金额未填、知识产权归属缺失）。
-  \item \texttt{review}：需要人工确认的事项（如保密期限是否合规）。
-  \item \texttt{not\_checked}：仅作记录，\textbf{不}计入风险数。
+  \item 党事方甲方名 vs 工商登记名（一致 / 字面差异 / 完全不一致）。
+  \item 关联关系（与中山大学是否存在关联）。
+  \item 民用 / 非涉密 / 非军工属性。
 \end{itemize}
+
+未提供材料时，这些项作为「人工复核事项」留档。
 
 \subsection{报告写出（\texttt{contract\_report\_writer.py}）}
 
-输出三件套：\texttt{contract\_review.md}（行政摘要）、\texttt{contract\_findings\_<hash>.json}
-（结构化结果，含 \texttt{template\_match}、\texttt{summary\_stats}、\texttt{findings}）、
-\texttt{合同形式化审核总表.xlsx}。
+12.7 KB，三件套同步写出：
 
-经 \texttt{full\_qcc\_review.py} 触发时，额外渲染并通过飞书推送
-\texttt{合同审核报告\_行政版.pdf}（即行政老师拿到的最终交付物）。
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \texttt{output/contract\_review.md} —— 行政摘要 Markdown。
+    包含「审核结论」「建议先修改的事项」「需要人工确认或补充材料的事项」
+    「企业信息核验情况」「知识产权重点」五节，全部用 Markdown 表格。
+  \item \texttt{output/contract\_findings\_<hash>.json} —— 结构化结果，
+    遵循 \texttt{references/schemas/contract\_review.json}（见
+    第~\ref{sec:contracts} 节）。
+  \item \texttt{output/合同形式化审核总表.xlsx} —— 多 sheet 的 Excel：
+    findings / not\_checked / 党事方信息 / 抽取字段。
+\end{itemize}
+
+\subsection{行政 PDF 渲染（\texttt{admin\_report.py}，外置）}
+
+部署在 OpenClaw 主机的 \texttt{/root/admin\_report.py} 用
+\texttt{weasyprint} 把 \texttt{contract\_findings\_<hash>.json}
+渲染为 A4 PDF \texttt{合同审核报告\_行政版.pdf}，结构：
+
+\begin{enumerate}[leftmargin=1.4em,itemsep=1pt]
+  \item 审核结论 + 决策与置信度
+  \item 建议先修改的事项（表格）
+  \item \textbf{学校范本对照}（基于 \texttt{template\_match} 字段）
+  \item 需要人工确认 / 补充材料的事项
+  \item 企业信息核验情况
+  \item 知识产权重点
+\end{enumerate}
 
 % =============================================================
-\section{范本匹配器：从单门槛到双门槛}
+\section{学校范本对照子系统}
 
-\subsection{问题}
+\subsection{背景：单门槛失败案例}
 
-v1.0 的 \texttt{template\_matcher.py} 用 \texttt{difflib.SequenceMatcher} 直接
+v1.0 的 \texttt{template\_matcher.py} 只用 \texttt{difflib.SequenceMatcher}
 对「合同正文 vs 范本正文（去波动 token 后）」算相似度，超过
-$\theta_{\text{shape}}=0.40$ 即判定为「基于学校范本」。
-
-\textbf{失败案例}（反例）：行业起草的技术服务合同，乙方为中山大学。该合同与
-\texttt{中山大学技术服务合同.docx} 共享大量套话（甲乙方、知识产权、保密、违约
-责任、争议解决），但其余条款完全是行业自己的。结果：
-
-\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item 实测相似度 $\approx 0.56$，被误判为「基于学校范本」。
-  \item 行政 PDF 的「三、学校范本对照」一节里凭空冒出 28 个 \texttt{removed}、
-    32 个 \texttt{added}（来自范本前置「使用说明」段被切成条款的噪声）。
-\end{itemize}
+$\theta=0.40$ 即判定为「基于学校范本」。失败案例：行业起草的技术服务
+合同（乙方为中山大学），实测相似度 $\approx 0.56$，被误判为基于
+\texttt{中山大学技术服务合同.docx}；进一步使「使用说明」段被切成
+「条款」，导致行政 PDF 第三节冒出 28 个 \texttt{removed} + 32 个
+\texttt{added} 噪声。
 
 \subsection{双门槛设计}
 
-新版判定要求\textbf{形状信号与内容信号同时通过}：
+新版判定：\textbf{形状信号与内容信号同时通过}：
 
 \begin{equation}\label{eq:gate}
 \text{matched} \;=\;
@@ -301,21 +631,18 @@ $\theta_{\text{shape}}=0.40$ 即判定为「基于学校范本」。
 \bigl(\#\text{anchor}_\text{contract} \ge k_\text{anchor}\bigr)
 \end{equation}
 
-其中：
-
 \begin{itemize}[leftmargin=1.4em,itemsep=1pt]
   \item $s_\text{best}=\max_T \text{Ratio}\bigl(\sigma(C),\sigma(T)\bigr)$，
     $C$ 是合同文本、$T$ 是范本文本、$\sigma$ 是
     \texttt{\_strip\_volatile}（清掉日期 / 金额 / 占位符等易变 token）。
-  \item $\theta_\text{shape}=0.65$（v1.0 是 0.40；v1.1 抬高 25 个百分点，
-    在反例 0.56 与正例 1.00 之间稳定区分）。
+  \item $\theta_\text{shape}=0.65$。
   \item \texttt{anchor} 集为\textbf{学校范本独有}的短语集合（见
     表~\ref{tab:anchors}），$k_\text{anchor}=1$。
 \end{itemize}
 
 \begin{table}[h]
 \centering
-\caption{SYSU 范本独有锚点短语（v1.1）}\label{tab:anchors}
+\caption{SYSU 范本独有锚点短语清单}\label{tab:anchors}
 \begin{tabular}{p{8.0cm} p{6.0cm}}
 \toprule
 \textbf{保留（独有）} & \textbf{已剔除（中性 / 误导）} \\ \midrule
@@ -330,182 +657,325 @@ $\theta_{\text{shape}}=0.40$ 即判定为「基于学校范本」。
 \end{tabular}
 \end{table}
 
-\textbf{为何剔除 \texttt{中山大学} / \texttt{示范文本} / \texttt{中大}}？
-中大经常作为乙方出现在行业自拟合同中（这只能说明合同的乙方是中大，并不意味着
-合同采用了\emph{学校范本}）；\texttt{示范文本} 还会出现在国家科技部范本里。
-这三个短语没有判别力，必须移出锚点集合。
+\textbf{为什么剔除 \texttt{中山大学} / \texttt{示范文本} / \texttt{中大}}：
+中大经常作为乙方出现在行业自拟合同中（这只能说明合同的乙方是中大，并不
+意味着合同采用了\emph{学校范本}）；\texttt{示范文本} 还会出现在国家科技部
+范本里。这三个短语没有判别力。
 
-\subsection{使用说明剥离（\texttt{\_strip\_preamble}）}
+\subsection{使用说明剥离}
 
-SYSU 范本 \texttt{.docx} 起始处有一段「使用说明」，编号为
-\texttt{一、二、三、…七、}，解释如何填写范本。这些不是真正的合同条款，会在
-逐条 diff 时产生大量 \texttt{removed} / \texttt{added} 噪声。
+SYSU 范本 \texttt{.docx} 起始有「使用说明」段（\texttt{一、二、三、…七、}）。
+\texttt{\_strip\_preamble} 在文本中存在 \texttt{第 N 条} 时，丢弃该处
+之前的所有行；否则保留原文。
 
-实现策略：当文本中存在 \texttt{第 N 条} 时，丢弃第一处 \texttt{第 N 条} 之前
-的所有行；否则保留原文（避免误删纯条目式合同）。
+\subsection{Clauses 级 diff}
 
-\subsection{决策结果与回归验证}
+匹配通过后做条款级对比：
 
-实测两个样例（通过 \texttt{run\_contract\_review.py} 全流水线）：
+\begin{enumerate}[leftmargin=1.4em,itemsep=1pt]
+  \item \texttt{\_split\_clauses}：按 \texttt{HEADING\_RE} 切条款。
+  \item \texttt{\_match\_clause\_pairs}：在范本条款与合同条款之间做
+    匈牙利式对齐（按 \texttt{difflib.ratio} 最大化）。
+  \item 标注 5 状态：\texttt{unchanged / modified / rewritten /
+    added / removed}。
+  \item 输出 \texttt{counts} 统计 + 每条条款的 \texttt{template\_excerpt}
+    与 \texttt{contract\_excerpt}（最多 120 字）。
+\end{enumerate}
 
-\begin{longtable}{p{4.0cm} p{1.2cm} p{1.4cm} p{1.4cm} p{6.4cm}}
+\subsection{范本库}
+
+\texttt{references/templates/} 收纳学校发布的合同范本：
+
+\begin{lstlisting}[style=shell]
+中山大学专利技术转让合同.docx
+中山大学共同申请专利合同.docx
+中山大学技术咨询合同.docx
+中山大学技术服务合同.docx
+中山大学技术服务委托合同.docx
+技术开发（委托）合同-中大为乙方.docx
+\end{lstlisting}
+
+新增范本只需把 \texttt{.docx} 放进该目录；
+\texttt{template\_matcher.load\_templates()} 在第一次调用时缓存内容。
+
+环境变量 \texttt{CONTRACT\_TEMPLATES\_DIR} 可覆盖默认目录路径。
+
+\subsection{回归基准}
+
+\begin{longtable}{p{4.0cm} p{1.4cm} p{1.4cm} p{1.4cm} p{6.0cm}}
 \toprule
 \textbf{案例} & \textbf{matched} & \textbf{相似度} & \textbf{anchor 命中}
 & \textbf{结论} \\ \midrule
 \endhead
-反例 \texttt{PCDW\_neg.docx}（行业自拟、乙方为中大）
-& False & 0.41 & 0
-& \texttt{non\_template\_contract: similarity\_0.41<0.65 and anchors\_0<1} \\
-正例 \texttt{zhuanli\_pos.docx}（基于专利转让范本）
-& True & 0.95 & 5
-& 匹配《中山大学专利技术转让合同.docx》；未改动 38 / 修改 9 / 改写 5 /
-  新增 2 / 删除 7 \\
+反例：行业自拟（乙方=中大） & False & 0.41 & 0
+& \texttt{non\_template\_contract:\ similarity\_0.41<0.65 and anchors\_0<1} \\
+正例：基于专利转让范本 & True & 0.95 & 5
+& 匹配《中山大学专利技术转让合同》；未改动 38 / 修改 9 / 改写 5 /
+新增 2 / 删除 7 \\
 \bottomrule
 \end{longtable}
 
 % =============================================================
-\section{Skill 拆分细节}
+\section{企业核验子系统}
 
-\subsection{\texttt{contract-formal-review-flow}（v1.1 精简版）}
+\subsection{材料来源（白名单）}
 
-主入口 skill。\textbf{保留}：
-
-\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item 强制执行规则（每次必须重跑脚本、不输出文本摘要、单条飞书回复等）。
-  \item 禁用响应表（含「未收到附件」「请告诉我您的称呼」等典型错误）。
-  \item IM 模式默认命令 \texttt{python3 /root/full\_qcc\_review.py "<path>"}。
-  \item 最终回复 7 节结构（含「学校范本对照」一节，但只占一句话）。
-  \item 知识产权摘要规则。
-\end{itemize}
-
-\textbf{外移}至 \texttt{references/handoff/qcc\_and\_arkclaw.md}：QCC 二维码登录
-demo、ArkClaw 连接器输出清单、本地浏览器会话复用细节。
-
-\textbf{YAML \texttt{description}}：双引号字符串，规避 \texttt{:\ } 触发的
-mapping 歧义。
-
-\subsection{\texttt{contract-template-compliance}（v1.1 新建）}
-
-\textbf{触发词}：范本 / 范式 / 示范文本 / 学校范本 / 中大范本 / 范本对照 /
-模板对照 / 条款偏离 / template compliance / clause deviation。
-
-\textbf{决策规则}（必须三选一）：
-
-\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
-  \item $\texttt{matched}=\text{False}$：「本合同不是基于中山大学合同范本起草，
-    按通用横向合同审核要点审查」。
-  \item $\texttt{matched}=\text{True} \wedge \texttt{modified\_count}=0$：
-    「与学校范本《\texttt{<name>}》一致，无条款偏离」。
-  \item $\texttt{matched}=\text{True} \wedge \texttt{modified\_count}>0$：
-    给出范本名 + 偏离统计 + 重点偏离条款表（按 \texttt{diff\_ratio} 升序最多 6 条）。
+\begin{enumerate}[leftmargin=1.4em,itemsep=1pt]
+  \item QCC 扫码登录后由 Playwright 抓到的工商页面文字（最常用）。
+  \item 用户提供的 \texttt{--company-check} JSON / CSV / XLSX。
+  \item 用户提供的截图 / 复制文本，由测试者整理成
+    \texttt{--company-check} 文件。
 \end{enumerate}
 
-\textbf{禁止行为}：
+\subsection{QCC 流程（\texttt{demos/qcc\_login\_demo.py}）}
+
+\begin{enumerate}[leftmargin=1.4em,itemsep=1pt]
+  \item 启动 Playwright Chromium，复用本机 \texttt{.browser-profiles/qcc-demo}。
+  \item 打开 \texttt{https://www.qcc.com}，点击「登录」。
+  \item 截二维码 → 通过 \texttt{full\_qcc\_review.fs\_image} 推到飞书。
+  \item 轮询登录状态；超时（默认 15 分钟）后退出。
+  \item 登录成功后搜索甲方公司，截取详情页。
+  \item 解析详情页文字（基本信息、统一信用代码、法人、地址、状态、
+    关联关系、风险信息），写入
+    \texttt{output/qcc\_login\_demo/company\_check\_draft\_*.json}。
+\end{enumerate}
+
+\subsection{核验匹配（\texttt{company\_check\_matcher.py}）}
+
+读取 \texttt{company\_check} JSON 并与合同抽取出的甲方做匹配：
 
 \begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item 在 \texttt{matched=False} 时列「范本对照表」。
-  \item 仅凭乙方是「中山大学」就声称采用了学校范本。
-  \item 把 \texttt{template\_match.reason} 字段（含英文）原样贴给老师。
-  \item 直接显示英文 status（应映射为「未改动 / 有修改 / 重大改写 /
-    合同新增 / 范本中存在但合同未见」）。
+  \item \texttt{party\_a\_match}：完全匹配 / 字面差异（如全角半角）/
+    完全不一致。
+  \item \texttt{related\_party\_check}：是否与中山大学存在关联（公开
+    股权 / 校办企业 / 校友企业声明）。
+  \item \texttt{military\_defense\_check}：检索是否有军工 / 涉密属性。
 \end{itemize}
 
-\subsection{\texttt{template\_match} 数据契约}
+输出落到 \texttt{review.external\_checks}，参与
+\texttt{contract\_rule\_checker.py} 的最终 finding 与决策。
 
-\begin{lstlisting}[style=json,caption={\texttt{template\_match} 字段（v1.1）}]
+\subsection{失败降级路径}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item QCC 登录超时 / 验证码 / 405 / 403 → 降级为「无 QCC」审核，
+    \texttt{external\_checks.source = "manual"}，并在最终 PDF 写明
+    「外部企业核验未完成」。
+  \item 飞书凭据缺失（\texttt{[config] Feishu APP\_ID/...}）→
+    跳过 IM 推送，但其它产物正常落到 \texttt{output/}。
+  \item 合同名疑似「已审核报告」（\texttt{looks\_like\_previous\_report}）
+    → 不再触发 QCC 与重审，避免循环。
+\end{itemize}
+
+% =============================================================
+\section{数据契约}\label{sec:contracts}
+
+\subsection{\texttt{contract\_findings\_<hash>.json} 顶层 schema}
+
+\begin{lstlisting}[style=json]
 {
-  "matched": true,
+  "source_file": "<absolute path>",
+  "decision": "未发现形式化问题|基本可审，建议人工复核|存在重大问题，需修改/补充",
+  "confidence": 0.0-1.0,
+  "summary_stats": {
+    "findings_total": int, "risk_total": int,
+    "enforce_total": int, "review_total": int,
+    "info_total": int,    "not_checked_total": int,
+    "rules_total": int,   "rules_hit_total": int,
+    "rules_pass_total": int, "rules_not_checked_total": int,
+    "by_scope": {...}, "by_severity": {...},
+    "risk_rule_ids": [...], "review_rule_ids": [...], "info_rule_ids": [...]
+  },
+  "findings": [
+    {
+      "rule_id": "F4", "section": "其他条款",
+      "severity": "block|warn|info", "scope": "enforce|review",
+      "title": "...", "evidence": "...", "location": "...",
+      "message": "...", "suggestion": "...",
+      "confidence": 0.0-1.0,
+      "details": {...}
+    }
+  ],
+  "not_checked_items": [...],
+  "rule_results": [...],
+  "extracted": {
+    "title": "...", "contract_no": "...", "party_a_name": "...",
+    "party_b_name": "...", "amount": "...", "ip_provisions": [...],
+    "template_match": { ... }
+  },
+  "external_checks": {
+    "company_check_provided": bool,
+    "source": "qcc|manual|none",
+    "checked_at": "...",
+    "evidence_files": [...],
+    "party_a_match": { ... },
+    "related_party_check": { ... },
+    "military_defense_check": { ... }
+  },
+  "generated_at": "ISO-8601"
+}
+\end{lstlisting}
+
+\subsection{\texttt{template\_match} 块}
+
+\begin{lstlisting}[style=json]
+{
+  "matched": true|false,
   "template_name": "中山大学专利技术转让合同.docx",
   "similarity": 0.947,
   "anchor_hits": 5,
   "anchor_min": 1,
   "match_threshold": 0.65,
-  "templates_considered": [...],
-  "reason": null,
+  "templates_considered": ["..."],
+  "reason": "non_template_contract: ..." | null,
   "clauses": [
     {
-      "id": "第三条",
-      "title": "...",
-      "status": "modified",
+      "id": "第三条", "title": "...",
+      "status": "unchanged|modified|rewritten|added|removed",
       "diff_ratio": 0.72,
-      "template_excerpt": "...",
-      "contract_excerpt": "..."
+      "template_excerpt": "...", "contract_excerpt": "..."
     }
   ],
-  "counts": {"unchanged": 38, "modified": 9, "rewritten": 5,
-             "added": 2, "removed": 7},
-  "modified_count": 23,
-  "summary": "匹配范本：…（相似度 95%，命中范本特征 5 项）；…"
+  "counts": {"unchanged": N, "modified": N, "rewritten": N,
+             "added": N, "removed": N},
+  "modified_count": N,
+  "summary": "..."
 }
 \end{lstlisting}
 
-% =============================================================
-\section{部署与运维}
+\subsection{规则 YAML 字段}
 
-\subsection{安装}
+每条规则强制字段：\texttt{id, section, title, scope, severity, check\_type,
+message}。可选字段：\texttt{patterns, source\_text, comment\_guidance,
+reviewer\_comments, suggestion}。\texttt{scope} 和 \texttt{check\_type}
+不一致时，\texttt{scope=not\_checked} 优先（仅留档不参与决策）。
+
+% =============================================================
+\section{部署形态}
+
+\subsection{本地（Windows + WSL）}
 
 \begin{lstlisting}[style=shell]
-# 1. 克隆仓库
+# Windows 侧（命令行调试 / 批量回归）
 git clone https://github.com/liangch97/verifyAgent.git
 cd verifyAgent
-
-# 2. Python 依赖
 pip install -r requirements.txt
+python run_contract_review.py "<contract.docx>"
 
-# 3. 安装两个 skill 到 ~/.openclaw/skills/
-python install_into_openclaw.py
+# WSL 侧（OpenClaw skill 部署）
+python install_into_openclaw.py        # 拷入 ~/.openclaw/skills/
+# 启动 openclaw-gateway / openclaw 后即可在飞书触发
 \end{lstlisting}
 
-\subsection{回归}
+\subsection{云端 ArkClaw}
 
-\begin{lstlisting}[style=shell]
-# 范本匹配器单元
-python3 _diag_template_match.py
-python3 _diag_anchors.py
-python3 _diag_clauses.py
+\texttt{deployment/arkclaw-global-prompt.md} 是面向云端 ArkClaw 的全局
+提示词。云端不内置飞书发送逻辑——由 ArkClaw 平台读取产物
+（\texttt{output/contract\_review.md} / \texttt{合同审核报告\_行政版.pdf}
+/ \texttt{qcc\_result\_*.png}）并调用平台连接器发送。
 
-# Skill 元数据 + 匹配器联合
-python3 _smoketest_skills.py
+\subsection{产物归档}
 
-# 端到端流水线
-python3 _e2e_template.py
-\end{lstlisting}
+每次 \texttt{full\_qcc\_review.py} 跑完会把所有产物归档到
+\texttt{output/im\_review/<timestamp>/}：
 
-\subsection{回滚}
-
-如需回滚到 v1.0 的整段 SKILL.md：
-
-\begin{lstlisting}[style=shell]
-cp ~/.openclaw/skills/contract-formal-review-flow/SKILL.md.preTemplateSplit.bak \
-   ~/.openclaw/skills/contract-formal-review-flow/SKILL.md
-rm -rf ~/.openclaw/skills/contract-template-compliance
-\end{lstlisting}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \texttt{contract\_review.md}
+  \item \texttt{contract\_findings\_<hash>.json}
+  \item \texttt{合同形式化审核总表.xlsx}
+  \item \texttt{合同审核报告\_行政版.pdf}（飞书推的就是这一份）
+  \item \texttt{qcc\_result\_*.png}（如有 QCC 成功）
+\end{itemize}
 
 % =============================================================
-\section{后续迭代规划}
+\section{测试与回归}
+
+\begin{longtable}{p{6.5cm} p{8.5cm}}
+\toprule
+\textbf{测试} & \textbf{覆盖} \\ \midrule
+\endhead
+\texttt{tests/test\_contract\_rule\_checker.py} & 41 条规则的命中 / 不命中
+单测，含 \texttt{check\_type} 各分支。 \\
+\texttt{tests/test\_company\_check.py} & 工商核验加载与匹配（JSON / CSV /
+XLSX 三种输入）。 \\
+\texttt{tests/test\_qcc\_login\_wait\_defaults.py} &
+\texttt{qcc\_login\_demo.py} 默认 hold-seconds 行为（曾经是 0 秒导致
+窗口立刻关）。 \\
+\texttt{tests/test\_qcc\_visible\_text\_extraction.py} & QCC 详情页可见
+文字抽取，覆盖关键 div。 \\
+\texttt{tests/test\_openclaw\_global\_prompt\_config.py} & OpenClaw
+全局提示词配置加载与校验。 \\
+\texttt{tests/smoke\_extractor\_cjk.py} & CJK 字符下党事方姓名抽取
+冒烟测试。 \\
+\bottomrule
+\end{longtable}
+
+\textbf{额外的诊断脚本}（v1.1 提供，根目录的
+\texttt{\_diag\_*.py} / \texttt{\_smoketest\_skills.py} /
+\texttt{\_e2e\_template.py}，一次性使用）：分别覆盖匹配器阈值扫描、
+锚点命中、条款 diff、skill YAML 元数据、端到端流水线。
+
+% =============================================================
+\section{后续路线}
 
 \begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
-  \item \textbf{语义化范本匹配}：在 \texttt{template\_matcher.py} 中加入条款级
-    embedding（如 BGE-small-zh）做「语义相似度」与现有形状相似度的融合，进一
-    步降低边缘案例（相似度 0.55$\sim$0.65）的误判风险。
-  \item \textbf{条款级建议生成}：把 \texttt{clauses[].status=rewritten} 的条款
-    交给规则引擎做二次审查，生成针对性的修改建议。
-  \item \textbf{多范本组合}：支持「主范本 + 附加条款范本」的组合识别（如
-    专利技术转让 + 共同申请专利的复合合同）。
-  \item \textbf{打分一致性测试}：构造 30+ 条「微改写」/「重命名甲乙方」/
-    「调整条款顺序」的合成样本，回归确保 \texttt{counts} 的稳定性。
-  \item \textbf{Skill 元数据校验}：把 \texttt{install\_into\_openclaw.py} 加上
-    YAML 解析 + \texttt{description} 长度 / 触发词覆盖度的预检，避免装入
-    破损的 SKILL.md。
+  \item \textbf{语义化范本匹配}。在 \texttt{template\_matcher} 中加入
+    条款级 embedding（如 BGE-small-zh）做语义相似度，与现有形状信号
+    融合，进一步降低边缘案例（相似度 0.55$\sim$0.65）的误判风险。
+  \item \textbf{条款级修改建议}。把 \texttt{clauses[].status=rewritten}
+    的条款交给规则引擎做二次审查，生成针对性的修改建议（而不仅是
+    「重大改写需复核法务」一句话）。
+  \item \textbf{多范本复合识别}。支持「主范本 + 附加条款范本」的复合
+    识别（如「专利技术转让 + 共同申请专利」）。
+  \item \textbf{规则 YAML 编辑器}。给二开提供轻量 Web 编辑器，
+    校验 \texttt{scope} 与 \texttt{check\_type} 的合法组合，避免误改。
+  \item \textbf{Skill 元数据预检}。\texttt{install\_into\_openclaw.py}
+    增加 YAML 解析 + \texttt{description} 长度 / 触发词覆盖度的预检，
+    避免装入破损的 \texttt{SKILL.md}。
+  \item \textbf{合成回归集}。构造 30+ 条「微改写 / 重命名甲乙方 /
+    调整条款顺序」的合成样本，确保 \texttt{counts} 在改动后仍稳定。
+  \item \textbf{运行时观测}。把 \texttt{full\_qcc\_review.py} 的步骤
+    时间、QCC 成功率、Feishu 推送成功率上报到一个本地仪表盘。
 \end{enumerate}
 
 % =============================================================
-\section*{附录 A：版本要点}
+\section*{附录 A：版本历史}
 
-\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item \textbf{v1.0}（2026-04）：单 skill；范本匹配器单门槛 $\theta=0.40$。
-  \item \textbf{v1.1}（2026-05）：双 skill 拆分；匹配器升级为
-    形状 $+$ 锚点双门槛；外移 QCC / ArkClaw 长篇手册；新增 CHANGELOG。
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{v1.0}（2026-04）。单 skill \texttt{contract-formal-review-flow}；
+    范本匹配器单门槛 $\theta=0.40$；QCC + Feishu 链路上线；41 条规则定型；
+    样例 \texttt{华为-中大智算集群可靠性测评技术合作协议-脱敏版.docx}。
+  \item \textbf{v1.1}（2026-05）。拆出 \texttt{contract-template-compliance}
+    skill；主 skill 精简至 11.4 KB；范本匹配器升级为
+    形状 $+$ 锚点双门槛（$\theta=0.65$，anchor $\ge 1$）+ 使用说明剥离；
+    QCC / ArkClaw 长篇手册外移到 \texttt{references/handoff/}；
+    新增 \texttt{CHANGELOG.md} 与本技术路线文档。
 \end{itemize}
+
+\section*{附录 B：常用命令速查}
+
+\begin{lstlisting}[style=shell]
+# 1. 安装两个 skill
+python install_into_openclaw.py
+
+# 2. 本地审核（不查 QCC）
+python run_contract_review.py "<contract.docx>"
+
+# 3. 本地审核 + 人工核验材料
+python run_contract_review.py "<contract.docx>" \
+       --company-check "<company_check.json>"
+
+# 4. IM 模式（部署侧）—— OpenClaw 自动调用
+python3 /root/full_qcc_review.py "<contract>"
+
+# 5. QCC 二维码登录 demo（仅测试登录，不查公司）
+python demos/qcc_login_demo.py "<company_name>" --login-only \
+       --hold-seconds 900
+
+# 6. 重新渲染本技术路线 PDF
+cd docs
+xelatex -interaction=nonstopmode technical_roadmap.tex
+xelatex -interaction=nonstopmode technical_roadmap.tex
+\end{lstlisting}
 
 \end{document}
