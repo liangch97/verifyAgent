@@ -19,6 +19,12 @@
 \usepackage{caption}
 \usepackage{titlesec}
 \usepackage{fancyhdr}
+% \bt{<path>}: typewriter 字体、可在 / _ . - ~ 等位置换行。
+% 借用 url 包（已通过 hyperref 加载）的 \nolinkurl 实现：它会把内部当成
+% 字面字符串处理（无需手工 \_ 转义），并在路径分隔符处允许断行；同时
+% 不会变成超链接。我们再加一句把 url-style 强制为 tt 体。
+\urlstyle{tt}
+\newcommand{\bt}[1]{\nolinkurl{#1}}
 
 \usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,backgrounds,calc}
 
@@ -37,6 +43,8 @@
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.5em}
 \linespread{1.2}
+\setlength{\emergencystretch}{3em} % 避免长 path / id 造成的轻微 overfull
+\tolerance=2000
 
 \titleformat{\section}{\Large\bfseries\sffamily}{\thesection.}{0.6em}{}
 \titleformat{\subsection}{\large\bfseries\sffamily}{\thesubsection}{0.5em}{}
@@ -243,48 +251,49 @@
 
 按角色把仓库划分为五层：
 
-\begin{longtable}{p{3.0cm} p{3.6cm} p{8.6cm}}
+\begin{longtable}{p{2.2cm} >{\raggedright\arraybackslash}p{5.0cm}
+                  >{\raggedright\arraybackslash}p{7.8cm}}
 \toprule
 \textbf{层级} & \textbf{目录 / 文件} & \textbf{职责} \\ \midrule
 \endhead
-1. 入口 & \texttt{run\_contract\_review.py} & 本地 CLI 入口（Argparse）。 \\
-1. 入口 & \texttt{install\_into\_openclaw.py} & 把 \texttt{skills/} 同步到
-\texttt{\textasciitilde/.openclaw/skills/}；写入当前解压目录路径。 \\
-1. 入口（外置）& \texttt{/root/full\_qcc\_review.py} & IM 编排器：QCC →
-抽取 → 审核 → 飞书推 PDF。代码在 OpenClaw 部署目录，不在仓库。 \\ \midrule
-2. Skill & \texttt{skills/contract-formal-review-flow/} & 形式化审核
+1. 入口 & \bt{run_contract_review.py} & 本地 CLI 入口（Argparse）。 \\
+1. 入口 & \bt{install_into_openclaw.py} & 把 \bt{skills/} 同步到
+\bt{~/.openclaw/skills/}；写入当前解压目录路径。 \\
+1. 入口（外置）& \bt{/root/full_qcc_review.py} & IM 编排器：QCC $\to$
+抽取 $\to$ 审核 $\to$ 飞书推 PDF。代码在 OpenClaw 部署目录，不在仓库。 \\ \midrule
+2. Skill & \bt{skills/contract-formal-review-flow/} & 形式化审核
 默认入口 skill。 \\
-2. Skill & \texttt{skills/contract-template-compliance/} & 范式合同对照
+2. Skill & \bt{skills/contract-template-compliance/} & 范式合同对照
 专家 skill。 \\
-2. Skill & \texttt{openclaw-extensions/contract-review-onboarding/} &
+2. Skill & \bt{openclaw-extensions/contract-review-onboarding/} &
 OpenClaw 引导插件（TS）。 \\ \midrule
-3. 管线 & \texttt{scripts/contract\_loader.py} & 读取 docx/pdf/txt
+3. 管线 & \bt{scripts/contract_loader.py} & 读取 docx/pdf/txt
 + 批注 + 高亮 + 表格。 \\
-3. 管线 & \texttt{scripts/contract\_extractor.py} & 字段抽取（标题、
+3. 管线 & \bt{scripts/contract_extractor.py} & 字段抽取（标题、
 项目名、金额、党事方、抬头等）。 \\
-3. 管线 & \texttt{scripts/contract\_rule\_checker.py} & 规则引擎，
+3. 管线 & \bt{scripts/contract_rule_checker.py} & 规则引擎，
 读取 41 条 YAML 规则。 \\
-3. 管线 & \texttt{scripts/contract\_report\_writer.py} & 写出
+3. 管线 & \bt{scripts/contract_report_writer.py} & 写出
 Markdown / JSON / Excel 三件套。 \\
-3. 管线 & \texttt{scripts/template\_matcher.py} & 学校范本对照（双门槛）。 \\
-3. 管线 & \texttt{scripts/company\_check\_loader.py} \&
-\texttt{company\_check\_matcher.py} & 加载企业核验材料并与合同甲方匹配。 \\
-3. 管线（外置）& \texttt{/root/admin\_report.py} & 行政 PDF 渲染。 \\ \midrule
-4. 数据 & \texttt{references/rules/horizontal\_contract\_formal\_rules.yaml}
+3. 管线 & \bt{scripts/template_matcher.py} & 学校范本对照（双门槛）。 \\
+3. 管线 & \bt{scripts/company_check_loader.py} \& \bt{company_check_matcher.py}
+& 加载企业核验材料并与合同甲方匹配。 \\
+3. 管线（外置）& \bt{/root/admin_report.py} & 行政 PDF 渲染。 \\ \midrule
+4. 数据 & \bt{references/rules/horizontal_contract_formal_rules.yaml}
 & 41 条规则。 \\
-4. 数据 & \texttt{references/schemas/*.json} & 三份输出 JSON Schema。 \\
-4. 数据 & \texttt{references/templates/中山大学*.docx} & 6 份学校合同范本
+4. 数据 & \bt{references/schemas/*.json} & 三份输出 JSON Schema。 \\
+4. 数据 & \bt{references/templates/中山大学*.docx} & 6 份学校合同范本
 （部署侧）。 \\
-4. 数据 & \texttt{references/prompts/} & 给老师可复制的提示词模板。 \\
-4. 数据 & \texttt{references/handoff/qcc\_and\_arkclaw.md} & QCC / 飞书
+4. 数据 & \bt{references/prompts/} & 给老师可复制的提示词模板。 \\
+4. 数据 & \bt{references/handoff/qcc_and_arkclaw.md} & QCC / 飞书
 连接器手册。 \\ \midrule
-5. 演示与测试 & \texttt{demos/qcc\_login\_demo.py} & QCC 二维码登录 demo
-（被 \texttt{full\_qcc\_review.py} 复用）。 \\
-5. 演示与测试 & \texttt{demos/qcc\_contract\_review\_demo.py} & 旧版扫码
-+ 审核合一脚本（不推送飞书）。 \\
-5. 演示与测试 & \texttt{tests/} & pytest 测试（规则、抽取、QCC 行为）。 \\
-5. 演示与测试 & \texttt{samples/} & 测试合同。 \\ \midrule
-6. 部署 & \texttt{deployment/arkclaw-global-prompt.md} & 云端 ArkClaw
+5. 演示与测试 & \bt{demos/qcc_login_demo.py} & QCC 二维码登录 demo
+（被 \bt{full_qcc_review.py} 复用）。 \\
+5. 演示与测试 & \bt{demos/qcc_contract_review_demo.py} & 旧版扫码
++ 审核合一脚本（不推送飞书），保留作为离线调试。 \\
+5. 演示与测试 & \bt{tests/} & pytest 测试（规则、抽取、QCC 行为）。 \\
+5. 演示与测试 & \bt{samples/} & 测试合同。 \\ \midrule
+6. 部署 & \bt{deployment/arkclaw-global-prompt.md} & 云端 ArkClaw
 全局提示词。 \\
 \bottomrule
 \end{longtable}
@@ -317,25 +326,26 @@ python3 /root/full_qcc_review.py "<contract_file_path>"
   \item \textbf{快速路径检测}。如果检测到飞书凭据缺失或合同名像
     \emph{已审核报告}（避免对生成的 PDF 再做审核），直接走「无 QCC」
     路径，跳到第 4 步。
-  \item \textbf{抽取党事方甲方}。\texttt{extract\_party\_a()} 用正则从合同
-    抽出甲方名字；如果用户传了 \texttt{--company-name}，以参数为准。
-  \item \textbf{QCC 扫码登录}。复用 \texttt{demos/qcc\_login\_demo.py} 的
-    Playwright 浏览器；优先复用 \texttt{.browser-profiles/qcc-demo} 的
-    本机会话；失效时通过 \texttt{fs\_image} 把二维码截图推到飞书让老师
+  \item \textbf{抽取党事方甲方}。\bt{extract_party_a()} 用正则从合同
+    抽出甲方名字；如果用户传了 \bt{--company-name}，以参数为准。
+  \item \textbf{QCC 扫码登录}。复用 \bt{demos/qcc_login_demo.py} 的
+    Playwright 浏览器；优先复用 \bt{.browser-profiles/qcc-demo} 的
+    本机会话；失效时通过 \bt{fs_image} 把二维码截图推到飞书让老师
     扫码；最长等 15 分钟。
   \item \textbf{QCC 公司搜索}。登录成功后搜索甲方公司，截屏，导出
-    \texttt{output/qcc\_login\_demo/company\_check\_draft\_*.json}。
-  \item \textbf{触发本地审核}。\\
-    \texttt{python run\_contract\_review.py "<contract>" --company-check
-    "<draft.json>"}\\
-    生成 Markdown / JSON / Excel 三件套到 \texttt{output/}。
-  \item \textbf{渲染行政 PDF}。导入 \texttt{admin\_report.py}，把
-    \texttt{contract\_findings\_<hash>.json} + Markdown 渲染成
-    \texttt{合同审核报告\_行政版.pdf}（含「三、学校范本对照」一节）。
-  \item \textbf{推送 PDF}。\texttt{fs\_file()} 通过 openclaw-gateway 把
+    \bt{output/qcc_login_demo/company_check_draft_*.json}。
+  \item \textbf{触发本地审核}：
+\begin{lstlisting}[style=shell]
+python run_contract_review.py "<contract>" --company-check "<draft.json>"
+\end{lstlisting}
+    生成 Markdown / JSON / Excel 三件套到 \bt{output/}。
+  \item \textbf{渲染行政 PDF}。导入 \bt{admin_report.py}，把
+    \bt{contract_findings_<hash>.json} + Markdown 渲染成
+    \bt{合同审核报告_行政版.pdf}（含「三、学校范本对照」一节）。
+  \item \textbf{推送 PDF}。\bt{fs_file()} 通过 openclaw-gateway 把
     PDF 上传到飞书并发给老师。
   \item \textbf{回归归档}。所有产物落到
-    \texttt{output/im\_review/<timestamp>/} 便于回查。
+    \bt{output/im_review/<timestamp>/} 便于回查。
 \end{enumerate}
 
 \textbf{失败路径}：QCC 验证码 / 405 / 403 / 登录超时 / 浏览器崩溃 / 飞书
@@ -366,12 +376,15 @@ python run_contract_review.py "<contract.docx>" \
 
 \subsection{Dashboard / Demo：可选}
 
-\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item \texttt{demos/qcc\_login\_demo.py "<company>" --login-only
-    --hold-seconds 900}：仅测试 QCC 二维码登录，保留窗口 15 分钟。
-  \item \texttt{demos/qcc\_contract\_review\_demo.py "<contract>"
-    --reuse-profile}：旧版扫码 + 审核合一脚本，\textbf{不}推送飞书，
-    保留作为离线调试。
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item 仅测试 QCC 二维码登录，保留窗口 15 分钟：
+\begin{lstlisting}[style=shell]
+python demos/qcc_login_demo.py "<company>" --login-only --hold-seconds 900
+\end{lstlisting}
+  \item 旧版扫码 + 审核合一脚本（\textbf{不}推送飞书，保留作为离线调试）：
+\begin{lstlisting}[style=shell]
+python demos/qcc_contract_review_demo.py "<contract>" --reuse-profile
+\end{lstlisting}
 \end{itemize}
 
 % =============================================================
@@ -382,17 +395,19 @@ python run_contract_review.py "<contract.docx>" \
 OpenClaw 在解析用户消息时按 skill description 中的触发词激活相应 skill。
 本项目当前提供 \emph{两个并列} skill：
 
-\begin{longtable}{p{4.6cm} p{2.8cm} p{7.5cm}}
+\begin{longtable}{>{\raggedright\arraybackslash}p{4.8cm}
+                  p{2.6cm}
+                  >{\raggedright\arraybackslash}p{7.6cm}}
 \toprule
 \textbf{Skill} & \textbf{规模} & \textbf{触发词与职责} \\ \midrule
 \endhead
-\texttt{contract-formal-review-flow} & 11.4 KB / 214 行
+\bt{contract-formal-review-flow} & 11.4 KB / 214 行
 & 触发：\emph{合同审核 / 横向合同 / 帮我审核 / 审核这个合同 /
-SYSU contract review}。强制模型只走 \texttt{full\_qcc\_review.py}，
+SYSU contract review}。强制模型只走 \bt{full_qcc_review.py}，
 保证 IM 模式下\textbf{不输出文本摘要}（PDF 即交付）。 \\
-\texttt{contract-template-compliance} & 7.2 KB / 99 行
+\bt{contract-template-compliance} & 7.2 KB / 99 行
 & 触发：\emph{范本 / 范式 / 示范文本 / 学校范本 / 范本对照 /
-模板对照 / 条款偏离}。读取 \texttt{template\_match} JSON 字段并产出
+模板对照 / 条款偏离}。读取 \bt{template_match} JSON 字段并产出
 范本符合性结论；不重复执行任何脚本。 \\
 \bottomrule
 \end{longtable}
