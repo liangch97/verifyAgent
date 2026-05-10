@@ -62,29 +62,6 @@ _PARTY_ALIASES = {
     "需求方": "甲",
 }
 
-# Anchor phrases EXCLUSIVE to SYSU contract templates. They never appear in
-# the national 科技部 templates or in industry-supplied custom contracts.
-# Generic markers (中山大学 / 示范文本 / 中大) are intentionally NOT included,
-# because SYSU often appears as Party B in custom industry contracts and the
-# 科技部 templates also use the phrase "示范文本".
-_SYSU_ANCHORS = (
-    "【科学研究院】",
-    "【科研管理部门】",
-    "学校合同管理信息系统",
-    "合同管理信息系统",
-    "中山大学•深圳",
-    "中山大学·深圳",
-    "中山大学∙深圳",
-    "本合同由【科学研究院】",
-    "本合同由【科研管理部门】",
-)
-_SYSU_ANCHOR_MIN = 1
-
-# Heading prefixes that mark the SYSU template's pre-amble "使用说明". Anything
-# strictly before the first 第一条 in either contract or template is treated as
-# meta-instruction and dropped before clause-level diff to avoid noise.
-_PREAMBLE_TERMINATOR = re.compile(r"^第[一二三四五六七八九十百零〇\d]+条")
-
 
 def _normalize_text(text: str) -> str:
     """Collapse whitespace, strip blank lines, harmonize punctuation."""
@@ -120,30 +97,9 @@ def _looks_like_heading(line: str) -> tuple[bool, str | None]:
     return False, None
 
 
-def _strip_preamble(text: str) -> str:
-    """Drop everything strictly before the first 第N条 heading.
-
-    SYSU template .docx files start with a numbered '使用说明' block (一、二、三、
-    四、五、六、七、) that explains how to fill the template. Those headings are
-    NOT contract clauses and inflate the diff with bogus removed/added rows.
-    Real contracts seldom carry that block. Drop it if and only if a 第N条 line
-    is later present, otherwise keep the original text untouched.
-    """
-    lines = text.splitlines()
-    cut = -1
-    for i, raw in enumerate(lines):
-        if _PREAMBLE_TERMINATOR.match(raw.strip()):
-            cut = i
-            break
-    if cut <= 0:
-        return text
-    return "\n".join(lines[cut:])
-
-
 def _split_clauses(text: str) -> list[dict[str, str]]:
     """Split text into clauses keyed by heading. Returns list of
     {"id": "第一条", "title": "项目名称", "body": "..."}."""
-    text = _strip_preamble(text)
     clauses: list[dict[str, str]] = []
     current_id = ""
     current_title = ""
@@ -176,13 +132,6 @@ def _split_clauses(text: str) -> list[dict[str, str]]:
 
     # drop the very first "preamble" entry if it has no id
     return [c for c in clauses if c.get("id") or len(c.get("body", "")) > 30]
-
-
-def _count_anchors(text: str) -> int:
-    """Number of distinct SYSU template anchor phrases present in `text`."""
-    if not text:
-        return 0
-    return sum(1 for a in _SYSU_ANCHORS if a in text)
 
 
 def _docx_to_text(path: Path) -> str:
@@ -356,17 +305,10 @@ def detect_template_match(
     *,
     contract_path: Path | None = None,
     templates_dir: Path | None = None,
-    match_threshold: float = 0.65,
-    anchor_min: int = _SYSU_ANCHOR_MIN,
+    match_threshold: float = 0.45,
 ) -> dict[str, Any]:
     """Detect whether `contract_text` is based on one of the school templates.
-    Returns a structured report; `matched=False` when no template matched.
-
-    Match decision combines a *shape* signal (SequenceMatcher similarity
-    after stripping volatile tokens) with a *content* signal (count of
-    SYSU template anchor phrases). Both must pass — boilerplate clauses
-    alone (甲方/乙方/知识产权/保密/违约/争议解决) are not enough.
-    """
+    Returns a structured report; `matched=False` when no template matched."""
     contract_text = _normalize_text(contract_text or "")
     templates = load_templates(templates_dir)
     if not templates:
@@ -391,34 +333,16 @@ def detect_template_match(
             best_name = name
             best_template_text = tt
 
-    anchor_hits = _count_anchors(contract_text)
-    shape_pass = best_ratio >= match_threshold
-    anchor_pass = anchor_hits >= anchor_min
-    matched = shape_pass and anchor_pass
+    matched = best_ratio >= match_threshold
 
     result: dict[str, Any] = {
         "matched": matched,
         "template_name": best_name,
         "similarity": round(best_ratio, 3),
-        "anchor_hits": anchor_hits,
-        "anchor_min": anchor_min,
-        "match_threshold": match_threshold,
         "templates_considered": list(templates.keys()),
     }
     if not matched:
-        if not shape_pass and not anchor_pass:
-            reason = (
-                f"non_template_contract: similarity_{best_ratio:.2f}<{match_threshold} "
-                f"and anchors_{anchor_hits}<{anchor_min}"
-            )
-        elif not shape_pass:
-            reason = f"best_similarity_{best_ratio:.2f}_below_{match_threshold}"
-        else:
-            reason = (
-                f"insufficient_template_anchors_{anchor_hits}_below_{anchor_min} "
-                f"(similarity_{best_ratio:.2f}_ok)"
-            )
-        result["reason"] = reason
+        result["reason"] = f"best_similarity_{best_ratio:.2f}_below_{match_threshold}"
         return result
 
     # Clause-level diff
@@ -434,7 +358,7 @@ def detect_template_match(
     result["counts"] = counts
     result["modified_count"] = counts["modified"] + counts["rewritten"] + counts["added"] + counts["removed"]
     result["summary"] = (
-        f"匹配范本：{best_name}（相似度 {best_ratio:.0%}，命中范本特征 {anchor_hits} 项）；"
+        f"匹配范本：{best_name}（相似度 {best_ratio:.0%}）；"
         f"未改动 {counts['unchanged']} 条，已修改 {counts['modified']} 条，"
         f"重写 {counts['rewritten']} 条，新增 {counts['added']} 条，删除 {counts['removed']} 条。"
     )

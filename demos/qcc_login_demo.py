@@ -40,6 +40,9 @@ BLOCK_KEYWORDS = [
     "访问被阻断",
     "安全威胁",
     "访问频繁",
+    "操作过于频繁",
+    "验证后再操作",
+    "验证一下",
     "请求异常",
     "WAF",
 ]
@@ -115,8 +118,7 @@ def main() -> None:
         }
         if chrome_path:
             launch_kwargs["executable_path"] = str(chrome_path)
-        else:
-            launch_kwargs["channel"] = "chrome"
+        # else: fall back to Playwright's bundled chromium (Linux/WSL has no Chrome channel)
 
         context = p.chromium.launch_persistent_context(str(run_profile_dir), **launch_kwargs)
         page = context.pages[0] if context.pages else context.new_page()
@@ -206,7 +208,7 @@ def main() -> None:
                     page = open_company_detail_url(page, args.company_url)
                 else:
                     page = search_company(page, args.company_name)
-                page.wait_for_timeout(3000)
+                __import__("time").sleep(3.0)
 
                 visible_text = get_visible_text(page)
                 page.screenshot(path=str(result_screenshot), full_page=True)
@@ -355,6 +357,17 @@ def main() -> None:
 
 
 def find_chrome() -> Path | None:
+    import sys as _sys
+    if _sys.platform.startswith("linux"):
+        for cand in [
+            Path("/usr/bin/google-chrome"),
+            Path("/usr/bin/google-chrome-stable"),
+            Path("/usr/bin/chromium"),
+            Path("/usr/bin/chromium-browser"),
+        ]:
+            if cand.exists():
+                return cand
+        return None
     candidates = [
         Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
         Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
@@ -405,8 +418,12 @@ def wait_for_login_checkpoint(
 
 
 def open_qcc_home(page: Any) -> None:
-    page.goto(QCC_HOME, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(2500)
+    import time as _t
+    try:
+        page.goto(QCC_HOME, wait_until="commit", timeout=45000)
+    except Exception as e:
+        print(f"[warn] goto error: {e}", flush=True)
+    _t.sleep(3.0)
 
 
 def is_probably_logged_in(page: Any) -> bool:
@@ -445,7 +462,7 @@ def open_qcc_login(page: Any) -> None:
             target = page.locator(selector).first
             if target.count() and target.is_visible(timeout=1500):
                 target.click(timeout=3000)
-                page.wait_for_timeout(3000)
+                __import__("time").sleep(3.0)
                 return
         except PlaywrightTimeoutError:
             continue
@@ -455,7 +472,7 @@ def open_qcc_login(page: Any) -> None:
     for url in QCC_LOGIN_CANDIDATES:
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(3000)
+            __import__("time").sleep(3.0)
             return
         except Exception:
             continue
@@ -471,13 +488,13 @@ def wait_for_probable_login(page: Any, timeout_seconds: int) -> bool:
             return False
         if has_logged_in_marker(text):
             return True
-        page.wait_for_timeout(3000)
+        __import__("time").sleep(3.0)
     return False
 
 
 def search_company(page: Any, company_name: str) -> Any:
     page.goto(QCC_HOME, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(2000)
+    __import__("time").sleep(2.0)
     if is_qcc_login_page(get_visible_text(page)):
         return page
 
@@ -495,7 +512,7 @@ def search_company(page: Any, company_name: str) -> Any:
                 loc.fill(company_name, timeout=3000)
                 loc.press("Enter", timeout=3000)
                 page.wait_for_load_state("domcontentloaded", timeout=45000)
-                page.wait_for_timeout(3000)
+                __import__("time").sleep(3.0)
                 return open_exact_company_result(page, company_name)
         except Exception:
             continue
@@ -506,7 +523,7 @@ def open_company_detail_url(page: Any, company_url: str) -> Any:
     if not is_allowed_qcc_detail_url(company_url):
         raise RuntimeError("Only qcc.com /firm/*.html detail URLs are accepted for company-url.")
     page.goto(company_url, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(5000)
+    __import__("time").sleep(5.0)
     return page
 
 
@@ -523,7 +540,7 @@ def open_exact_company_result(page: Any, company_name: str) -> Any:
     detail_href = find_exact_company_detail_href(page, company_name)
     if detail_href:
         page.goto(detail_href, wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(4000)
+        __import__("time").sleep(4.0)
         return page
 
     selectors = [
@@ -547,12 +564,12 @@ def open_exact_company_result(page: Any, company_name: str) -> Any:
                 try:
                     with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
                         loc.click(timeout=5000)
-                    page.wait_for_timeout(4000)
+                    __import__("time").sleep(4.0)
                     return page
                 except Exception:
                     pass
                 loc.click(timeout=5000)
-                page.wait_for_timeout(3000)
+                __import__("time").sleep(3.0)
                 return page
         except Exception:
             continue
@@ -606,8 +623,20 @@ def detect_blocked_reason(text: str) -> str:
 
 
 def is_qcc_login_page(text: str) -> bool:
+    # v6: hardened login detection
     normalized = " ".join((text or "").split())
     if not normalized:
+        return False
+    # Positive markers: if any present, user is logged in -> NOT a login page.
+    logged_in_markers = [
+        "退出登录", "我的账号", "我的关注", "我的报告", "我的笔记", "我的VIP",
+        "个人中心", "账户设置", "认领企业", "已认证", "已实名",
+        "我的订单", "我的会员",
+    ]
+    if any(m in normalized for m in logged_in_markers):
+        return False
+    if ("统一社会信用代码" in normalized
+        and any(st in normalized for st in ("存续", "在业", "正常", "开业"))):
         return False
     login_markers = ["扫码登录", "微信登录", "短信/密码登录", "打开 企查查APP"]
     marker_count = sum(1 for marker in login_markers if marker in normalized)
@@ -616,13 +645,143 @@ def is_qcc_login_page(text: str) -> bool:
     return "扫码登录" in normalized and "免费注册" in normalized and "退出" not in normalized
 
 
+
+# >>> qcc_card_v2 patch <<<
+def _qcc_strip(s: str) -> str:
+    """Strip QCC value: remove '复制', '更多 N', leading/trailing punctuation/spaces."""
+    if not s:
+        return ""
+    s = s.replace("复制", "")
+    s = re.sub(r"更多\s*\d*", "", s)
+    s = s.strip(" \t\r\n：:|·,，")
+    return s
+
+
+def extract_qcc_card_fields_v2(company_name: str, visible_text: str) -> dict:
+    """Parse a QCC search/detail page raw text into a structured dict.
+
+    Handles QCC's two layouts:
+    1. Inline:    "注册资本：4104113.182万元复制"
+    2. Two-line:  "法定代表人：" then next non-empty line "赵明路"
+    """
+    if not visible_text:
+        return {}
+
+    raw_lines = visible_text.splitlines()
+    # Locate card start: line containing the exact company_name (with optional status).
+    status_words = "(?:存续|在业|正常|开业|在营|注销|吊销|迁出|停业|清算|已告解散)"
+    head_pat = re.compile(rf"^\s*{re.escape(company_name)}(?:\s+{status_words})?\s*$")
+    start = -1
+    for idx, ln in enumerate(raw_lines):
+        if head_pat.match(ln):
+            start = idx
+            break
+    if start < 0:
+        # Fallback: search for first occurrence of company_name + status_words
+        for idx, ln in enumerate(raw_lines):
+            if company_name in ln and re.search(status_words, ln):
+                start = idx
+                break
+    if start < 0:
+        return {}
+
+    # End: stop at separator lines like 自身风险, 基本信息 X 法律诉讼, 简介:
+    end_keywords = ("自身风险", "认领企业", "基本信息 ", "法律诉讼")
+    end = len(raw_lines)
+    for idx in range(start + 1, min(len(raw_lines), start + 80)):
+        ln = raw_lines[idx]
+        if any(k in ln for k in end_keywords):
+            end = idx
+            break
+    card = raw_lines[start:end]
+
+    # Helper: get value following a label, either inline (label：value) or next non-empty line.
+    def value_for(labels: list, max_len: int = 200) -> str:
+        for i, ln in enumerate(card):
+            stripped = ln.strip()
+            for label in labels:
+                # Inline: label[：:](rest)
+                m = re.match(rf"^\s*{re.escape(label)}\s*[：:]\s*(.+)$", stripped)
+                if m:
+                    val = _qcc_strip(m.group(1))
+                    if val:
+                        return val[:max_len]
+                # Label-only line: next non-empty value line
+                if re.match(rf"^\s*{re.escape(label)}\s*[：:]?\s*$", stripped):
+                    for j in range(i + 1, min(len(card), i + 5)):
+                        nxt = _qcc_strip(card[j])
+                        if not nxt:
+                            continue
+                        # Skip pure noise
+                        if nxt in {"复制", "详情", "导出"} or re.match(r"^更多\s*\d*$", nxt):
+                            continue
+                        return nxt[:max_len]
+        return ""
+
+    fields: dict = {}
+    fields["name"] = company_name
+    # company_status from header line
+    header = card[0] if card else ""
+    m = re.search(status_words, header)
+    fields["company_status"] = m.group(0) if m else ""
+    # credit_code: 18-char alphanumeric
+    joined = "\n".join(card)
+    m = re.search(r"(?:统一社会信用代码|信用代码)\s*[：:]?\s*([0-9A-Z]{18})", joined)
+    fields["credit_code"] = m.group(1) if m else ""
+
+    fields["legal_rep"] = value_for(["法定代表人", "法人代表"], max_len=20)
+    # legal_rep should be a Chinese/Latin name 2-12 chars; trim if longer
+    if fields["legal_rep"]:
+        m2 = re.match(r"^([\u4e00-\u9fa5A-Za-z·]{2,12})", fields["legal_rep"])
+        fields["legal_rep"] = m2.group(1) if m2 else fields["legal_rep"]
+
+    fields["registered_address"] = value_for(["地址", "注册地址", "住所", "企业地址"], max_len=160)
+    fields["registered_capital"] = value_for(["注册资本"], max_len=60)
+    fields["established_date"] = value_for(["成立日期", "成立时间"], max_len=30)
+    fields["phone"] = value_for(["电话", "联系电话"], max_len=40)
+    fields["email"] = value_for(["邮箱", "电子邮箱"], max_len=80)
+    fields["website"] = value_for(["官网", "网址"], max_len=120)
+    fields["company_scale"] = value_for(["企业规模"], max_len=30)
+    fields["employee_count"] = value_for(["员工人数", "参保人数"], max_len=40)
+    # Industry: use first inline 企查查行业:value
+    m = re.search(r"企查查行业\s*[：:]\s*([^\n\r]{2,40})", joined)
+    fields["industry"] = _qcc_strip(m.group(1)) if m else ""
+    # company_type / business_scope: keep empty unless visible
+    fields["company_type"] = value_for(["企业类型", "公司类型"], max_len=80)
+    fields["business_scope"] = value_for(["经营范围"], max_len=400)
+
+    fields["extraction_mode"] = "qcc_card_v2"
+    fields["_card_text"] = joined
+    return fields
+# >>> end qcc_card_v2 patch <<<
+
+def _normalize_company_name(name: str) -> str:
+    """Drop all whitespace from a Chinese company name. PDF text extraction
+    sometimes inserts a space inside Chinese tokens ("华为技术有限公 司"),
+    which breaks exact substring matching against the QCC page."""
+    return re.sub(r"\s+", "", name or "")
+
+
+def _name_visible_in(company_name: str, visible_text: str) -> bool:
+    """Whitespace-tolerant company-name presence check."""
+    if not company_name or not visible_text:
+        return False
+    if company_name in visible_text:
+        return True
+    return _normalize_company_name(company_name) in _normalize_company_name(visible_text)
+
+
 def build_company_check_draft(
     company_name: str,
     visible_text: str,
     screenshot: Path,
     blocked_reason: str,
 ) -> dict[str, Any]:
-    target_company_visible = bool(visible_text and company_name in visible_text and not is_qcc_login_page(visible_text))
+    target_company_visible = bool(
+        visible_text
+        and _name_visible_in(company_name, visible_text)
+        and not is_qcc_login_page(visible_text)
+    )
     if not target_company_visible:
         registry_fields = {
             "name": "",
@@ -635,7 +794,16 @@ def build_company_check_draft(
             "extraction_mode": "no_target_company_visible",
         }
     else:
-        registry_fields = extract_company_registry_fields(company_name, visible_text)
+        # Try v2 robust parser first; fall back to legacy if it returned little.
+        v2 = extract_qcc_card_fields_v2(company_name, visible_text)
+        legacy = extract_company_registry_fields(company_name, visible_text)
+        # Merge: v2 values win when truthy; otherwise fallback to legacy.
+        registry_fields = dict(legacy)
+        for k, v in v2.items():
+            if v:
+                registry_fields[k] = v
+        if v2:
+            registry_fields["extraction_mode"] = "qcc_card_v2"
     military_hits = (
         [kw for kw in ["军工", "国防", "兵器", "军事", "涉密", "武器装备"] if kw in visible_text]
         if target_company_visible
@@ -680,6 +848,14 @@ def build_company_check_draft(
         "company_status": registry_fields.get("company_status") or fallback_company_status,
         "company_type": registry_fields.get("company_type") or fallback_company_type,
         "business_scope": registry_fields.get("business_scope") or fallback_business_scope,
+        "registered_capital": registry_fields.get("registered_capital", ""),
+        "established_date": registry_fields.get("established_date", ""),
+        "phone": registry_fields.get("phone", ""),
+        "email": registry_fields.get("email", ""),
+        "website": registry_fields.get("website", ""),
+        "company_scale": registry_fields.get("company_scale", ""),
+        "employee_count": registry_fields.get("employee_count", ""),
+        "industry": registry_fields.get("industry", ""),
         "shareholders": related_people["shareholders"],
         "directors": related_people["directors"],
         "executives": related_people["executives"],
@@ -725,7 +901,7 @@ def extract_company_registry_fields(company_name: str, visible_text: str) -> dic
 
     text = "\n".join(lines)
     return {
-        "name": company_name if company_name in text else "",
+        "name": _normalize_company_name(company_name) if _name_visible_in(company_name, text) else "",
         "company_status": first_labeled_match(text, ["登记状态", "经营状态", "状态"], max_len=20),
         "credit_code": first_match(text, r"(?:统一社会信用代码|信用代码)[：:\s]*([0-9A-Z]{18})"),
         "legal_rep": first_labeled_match(text, ["法定代表人", "法人代表", "法人"], max_len=30),
@@ -777,8 +953,12 @@ def extract_named_people(text: str, titles: list[str]) -> list[dict[str, str]]:
 def first_exact_company_card(company_name: str, lines: list[str]) -> list[str]:
     status_words = "(?:存续|在业|正常|开业|在营|注销|吊销|迁出|停业|清算|已告解散)"
     exact_pattern = re.compile(rf"^{re.escape(company_name)}(?:\s+{status_words})?$")
+    normalized_target = _normalize_company_name(company_name)
+    norm_pattern = re.compile(rf"^{re.escape(normalized_target)}(?:\s*{status_words})?$") if normalized_target else None
     for idx, line in enumerate(lines):
-        if not exact_pattern.match(line):
+        line_norm = _normalize_company_name(line)
+        matched = exact_pattern.match(line) or (norm_pattern and norm_pattern.match(line_norm))
+        if not matched:
             continue
         if any(suffix in line.replace(company_name, "", 1) for suffix in ["分公司", "研究所", "办事处"]):
             continue

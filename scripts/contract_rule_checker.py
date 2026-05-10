@@ -520,7 +520,7 @@ def _check_date_term(rule: dict[str, Any], text: str) -> dict[str, Any] | None:
         if any(k in ln for k in ["有效期限", "合同期限", "协议期限", "履行期限", "起止日期", "工作计划"])
     ]
     term_text = "\n".join(term_lines)
-    duration_hits = re.findall(r"(?:期限|有效期|合同期限|协议期限|履行期限)[^\n。；]{0,30}?(\d{1,2})\s*年", term_text)
+    duration_hits = re.findall(r"(?:有效期限|合同期限|协议期限|履行期限|合同有效期)\s*[:：为共约 ]{0,4}(?<!\d)(\d{1,2})\s*年(?!\d)", term_text)
     if duration_hits and max(int(x) for x in duration_hits) > 5:
         return _make_finding(rule, evidence=f"期限{max(int(x) for x in duration_hits)}年", location="期限条款", confidence=0.84)
     starts = re.findall(r"(20\d{2})[年\-/](\d{1,2})[月\-/](\d{1,2})", term_text)
