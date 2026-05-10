@@ -226,8 +226,179 @@ def extract_party_a(contract_path: Path) -> str:
     return ""
 
 
+# ============= Display-friendly contract name =============
+_MOJIBAKE_HINTS = set("åæäèçñëïüÅÆÄÈÇÑËÏÜÃÂÔÕÖÝÞßçÇÉÊËÍÎÏÓÔÕÖÚÛÜ")
+
+
+def _looks_like_mojibake(name: str) -> bool:
+    if not name:
+        return False
+    hits = sum(1 for ch in name if ch in _MOJIBAKE_HINTS)
+    return hits >= 3
+
+
+def _display_contract_name(contract_path: Path, party_a: str = "") -> str:
+    """Return a human-readable contract name for Feishu chat display.
+
+    When the filename is mojibake (common for Feishu IM attachments saved by
+    openclaw), try to extract the title from the document content. Falls back
+    to a short description with the party name and file extension.
+    """
+    name = contract_path.name
+    if not _looks_like_mojibake(name):
+        return name
+    # Try extracting title from the contract
+    try:
+        from scripts.contract_loader import load_contract
+        from scripts.contract_extractor import extract_contract
+        loaded = load_contract(contract_path)
+        ext = extract_contract(loaded)
+        title = ext.get("title", "")
+        if isinstance(title, str) and title.strip() and len(title.strip()) < 80:
+            clean = title.strip()
+            # Avoid polluted titles that contain party info
+            if "甲方" not in clean and "乙方" not in clean:
+                return clean
+    except Exception:
+        pass
+    # Fallback: use party name + extension
+    suffix = name.rsplit(".", 1)[-1] if "." in name else "docx"
+    if party_a:
+        return f"{party_a}合同.{suffix}"
+    return f"合同文件.{suffix}"
+
+
 # ============= Main pipeline =============
+def _detach_to_background():
+    """Fork and detach so the agent gets immediate stdout EOF.
+
+    Child continues with stdout/stderr redirected to a per-run log file.
+    """
+    import os
+    if os.environ.get('FULL_QCC_DETACHED') == '1':
+        return
+    log_dir = '/tmp/openclaw_review_logs'
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, 'review_%d_%d.log' % (os.getpid(), int(time.time())))
+    pid = os.fork()
+    if pid > 0:
+        print('[scheduled] background pid=%d, log=%s' % (pid, log_path), flush=True)
+        print('🚀 已开始审核，PDF 会自动推送到飞书，请稍候。', flush=True)
+        os._exit(0)
+    os.setsid()
+    os.environ['FULL_QCC_DETACHED'] = '1'
+    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    os.dup2(fd, 1); os.dup2(fd, 2); os.close(fd)
+    dn = os.open('/dev/null', os.O_RDONLY); os.dup2(dn, 0); os.close(dn)
+
+
+
+
+_BAD_NAME_TOKENS = (
+    "应当", "违反", "提供", "支付", "承担", "应要求", "双方", "任一方",
+    "本合同", "所有", "分配", "归属", "约定", "本协议", "本条", "本款",
+    "如下", "下列", "上述", "前述", "委托方", "受托方", "甲方", "乙方",
+    "提成", "违约金", "解除", "登记",
+)
+
+
+def _looks_like_bad_name(name) -> bool:
+    if not isinstance(name, str):
+        return True
+    n = name.strip()
+    if not n or len(n) < 2 or len(n) > 50:
+        return True
+    if any(ch in n for ch in ("】", "]", "。", "；", ";")):
+        return True
+    if any(tok in n for tok in _BAD_NAME_TOKENS):
+        return True
+    return False
+
+
+def _merge_llm_into_rule(rule_ext: dict, llm_ext: dict) -> None:
+    if not isinstance(llm_ext, dict) or not llm_ext or llm_ext.get("_llm_error"):
+        return
+    rule_pa = rule_ext.get("party_a") or {}
+    llm_pa = llm_ext.get("party_a") or {}
+    if isinstance(llm_pa, dict):
+        if llm_pa.get("name") and (_looks_like_bad_name(rule_pa.get("name")) or not rule_pa.get("name")):
+            rule_pa["name"] = llm_pa["name"]
+            print("[merge] party_a.name <- LLM: " + str(llm_pa["name"]), flush=True)
+        for fld in ("legal_rep", "address", "credit_code"):
+            llm_v = llm_pa.get(fld)
+            rule_v = rule_pa.get(fld)
+            if llm_v and (not rule_v or (isinstance(rule_v, str) and (len(rule_v) > 80 or any(t in rule_v for t in _BAD_NAME_TOKENS)))):
+                rule_pa[fld] = llm_v
+                print("[merge] party_a." + fld + " <- LLM", flush=True)
+        rule_ext["party_a"] = rule_pa
+    rule_pb = rule_ext.get("party_b") or {}
+    llm_pb = llm_ext.get("party_b") or {}
+    if isinstance(llm_pb, dict):
+        if llm_pb.get("name") and (_looks_like_bad_name(rule_pb.get("name")) or not rule_pb.get("name")):
+            rule_pb["name"] = llm_pb["name"]
+            print("[merge] party_b.name <- LLM: " + str(llm_pb["name"]), flush=True)
+        for fld in ("legal_rep", "address", "credit_code"):
+            llm_v = llm_pb.get(fld)
+            rule_v = rule_pb.get(fld)
+            if llm_v and (not rule_v or (isinstance(rule_v, str) and (len(rule_v) > 80 or any(t in rule_v for t in _BAD_NAME_TOKENS)))):
+                rule_pb[fld] = llm_v
+                print("[merge] party_b." + fld + " <- LLM", flush=True)
+        rule_ext["party_b"] = rule_pb
+    for fld in ("title", "contract_no", "contract_type", "project_name"):
+        if not rule_ext.get(fld) and llm_ext.get(fld):
+            rule_ext[fld] = llm_ext[fld]
+            print("[merge] " + fld + " <- LLM", flush=True)
+    if not rule_ext.get("amount") and (llm_ext.get("amount_yuan") or llm_ext.get("amount_text")):
+        rule_ext["amount"] = llm_ext.get("amount_text") or str(llm_ext.get("amount_yuan"))
+        print("[merge] amount <- LLM", flush=True)
+    # dates
+    rule_dates = rule_ext.get("dates") if isinstance(rule_ext.get("dates"), dict) else {}
+    for src, dst in (("sign_date", "sign_date"), ("perform_start", "perform_start"), ("perform_end", "perform_end")):
+        llm_v = llm_ext.get(src)
+        if llm_v and not rule_dates.get(dst):
+            rule_dates[dst] = llm_v
+            print("[merge] dates." + dst + " <- LLM: " + str(llm_v), flush=True)
+    if rule_dates:
+        rule_ext["dates"] = rule_dates
+    # bank_account
+    rule_ba = rule_ext.get("bank_account") if isinstance(rule_ext.get("bank_account"), dict) else {}
+    llm_ba = llm_ext.get("bank_account") or {}
+    if isinstance(llm_ba, dict):
+        for fld in ("name", "account", "bank"):
+            if llm_ba.get(fld) and not rule_ba.get(fld):
+                rule_ba[fld] = llm_ba[fld]
+                print("[merge] bank_account." + fld + " <- LLM", flush=True)
+        if rule_ba:
+            rule_ext["bank_account"] = rule_ba
+    # payment_terms
+    rule_pt = rule_ext.get("payment_terms") or []
+    llm_pt = llm_ext.get("payment_terms") or []
+    if isinstance(llm_pt, list) and llm_pt and (not rule_pt or len(rule_pt) < len(llm_pt)):
+        rule_ext["payment_terms"] = llm_pt
+        print("[merge] payment_terms <- LLM (n=" + str(len(llm_pt)) + ")", flush=True)
+    # summaries
+    for src, dst in (("confidentiality_summary", "confidentiality_summary"),
+                     ("ip_clauses_summary", "ip_clauses_summary"),
+                     ("liability_summary", "liability_summary")):
+        if llm_ext.get(src) and not rule_ext.get(dst):
+            rule_ext[dst] = llm_ext[src]
+            print("[merge] " + dst + " <- LLM", flush=True)
+    # contacts
+    rule_ct = rule_ext.get("contacts") or []
+    llm_ct = llm_ext.get("contacts") or []
+    if isinstance(llm_ct, list) and llm_ct and (not rule_ct or len(rule_ct) < len(llm_ct)):
+        rule_ext["contacts"] = llm_ct
+        print("[merge] contacts <- LLM (n=" + str(len(llm_ct)) + ")", flush=True)
+    # attachments
+    rule_at = rule_ext.get("attachments") or []
+    llm_at = llm_ext.get("attachments") or []
+    if isinstance(llm_at, list) and llm_at and (not rule_at or len(rule_at) < len(llm_at)):
+        rule_ext["attachments"] = llm_at
+        print("[merge] attachments <- LLM (n=" + str(len(llm_at)) + ")", flush=True)
+
+
 def main():
+    _detach_to_background()
     ap = argparse.ArgumentParser()
     ap.add_argument("contract", type=Path)
     ap.add_argument("--company-name", default="", help="Override Party A name")
@@ -238,7 +409,7 @@ def main():
 
     contract = args.contract.resolve()
     if not contract.exists():
-        fs_text(f"[error] 合同文件不存在: {contract}")
+        fs_text(f"❌ 找不到合同文件，请确认路径是否正确。")
         sys.exit(2)
 
     if looks_like_previous_report(contract):
@@ -250,14 +421,14 @@ def main():
 
     company = args.company_name or extract_party_a(contract)
     if not company:
-        fs_text("[error] 无法从合同提取甲方名称，请用 --company-name 指定")
+        fs_text("❌ 无法从合同中识别甲方名称，请在消息中注明甲方公司全称后重试。")
         sys.exit(2)
 
-    fs_text(f"📋 开始审核\n合同: {contract.name}\n甲方: {company}\n步骤 1/4: 启动 QCC 登录...")
+    display_name = _display_contract_name(contract, company)
+    fs_text(f"📋 开始审核\n合同: {display_name}\n甲方: {company}\n步骤 1/4: 启动 QCC 登录...")
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     safe = qd.safe_name(company)
-    qr_png = OUTDIR / f"qcc_qr_{stamp}.png"
     result_png = OUTDIR / f"qcc_result_{safe}_{stamp}.png"
     text_txt = OUTDIR / f"qcc_text_{safe}_{stamp}.txt"
     draft_json = OUTDIR / f"company_check_draft_{safe}_{stamp}.json"
@@ -294,7 +465,12 @@ def main():
 
         # ------ Try direct search first; if cookies survived, skip QR entirely ------
         def try_search() -> tuple[str, bool]:
-            """Return (visible_text, blocked_by_login)."""
+            """Return (visible_text, blocked_by_login).
+            On exception, ALWAYS try to read current page text first — rate-limit /
+            CAPTCHA pages often replace the search box with a verification widget,
+            causing search_company() to raise. The caller needs page text so it can
+            detect 'operation too frequent' and switch to manual-verify flow instead
+            of falsely concluding login expired."""
             try:
                 p2 = qd.search_company(page, company)
                 time.sleep(3)
@@ -302,99 +478,84 @@ def main():
                 return vt, qd.is_qcc_login_page(vt)
             except Exception as e:
                 print(f"[search err] {e}", flush=True)
-                return "", True
+                fallback_text = ""
+                try:
+                    fallback_text = qd.get_visible_text(page) or ""
+                except Exception:
+                    try:
+                        fallback_text = page.evaluate("() => document.body.innerText || ''") or ""
+                    except Exception:
+                        fallback_text = ""
+                err_msg = str(e).lower()
+                if not fallback_text and ("closed" in err_msg or "target" in err_msg or "disposed" in err_msg):
+                    return "", False
+                return fallback_text, qd.is_qcc_login_page(fallback_text)
 
         fs_text("步骤 1.5/4: 复用浏览器配置文件，直接尝试搜索...")
         visible_text, blocked = try_search()
-        login_ok = not blocked and bool(visible_text) and not qd.detect_blocked_reason(visible_text)
+        blocked_reason = qd.detect_blocked_reason(visible_text) if visible_text else ""
+        login_ok = not blocked and bool(visible_text) and not blocked_reason
         if login_ok:
             fs_text("✅ 登录态已复用，跳过扫码")
-        elif not _FEISHU_ENABLED:
-            # Without Feishu we cannot push the QR for the user to scan, so
-            # interactive login is impossible. Skip QCC entirely and fall
-            # through to the no-QCC review branch handled after this block.
-            fs_text("[提示] 未配置飞书推送，跳过 QCC 扫码登录，本次仅做规则审核")
-            login_ok = False
-            visible_text = ""
         else:
-            # Need QR scan
-            fs_text("⚠️ 登录态失效，需要扫码")
-            try:
-                page.goto(QCC_HOME, wait_until="domcontentloaded", timeout=45000)
-            except Exception:
-                pass
-            time.sleep(3)
-            for sel in ["text=登录", "a:has-text('登录')", "button:has-text('登录')", ".login"]:
+            # Unified manual-intervention branch.
+            # We don't try to distinguish "login expired" vs "rate-limited" vs
+            # "captcha" — they all require the human operator to look at the
+            # browser window and act. We deliberately do NOT navigate away,
+            # screenshot, or push images: keeping the current QCC page intact
+            # is what lets the operator see exactly what QCC is asking for.
+            reason_hint = ""
+            if blocked_reason:
+                reason_hint = f"（检测到提示：{blocked_reason[:60]}）"
+            elif blocked:
+                reason_hint = "（登录态失效）"
+            elif not visible_text:
+                reason_hint = "（页面无内容，可能被拦截）"
+            fs_text(
+                "⏸️ 企查查环节需要人工介入" + reason_hint + "\n"
+                "  • WSL 桌面已弹出 Chrome 浏览器窗口，请在该窗口中完成相应操作\n"
+                "    （扫码登录 / 点击「验证一下」/ 处理弹窗等，按页面提示来即可）\n"
+                "  • 完成后无需任何操作，脚本每 8 秒自动重试，最长等待 5 分钟\n"
+                "  • 若超时未完成，将自动回落为「仅规则审核」（不影响合同结论）"
+            )
+            wait_deadline = time.time() + min(args.login_timeout, 300)
+            cleared = False
+            poll_idx = 0
+            last_progress_push = time.time()
+            while time.time() < wait_deadline:
+                time.sleep(8)
+                poll_idx += 1
+                visible_text, blocked = try_search()
+                blocked_reason2 = qd.detect_blocked_reason(visible_text) if visible_text else ""
+                if visible_text and not blocked and not blocked_reason2:
+                    cleared = True
+                    fs_text(f"✅ 人工介入完成（轮询 #{poll_idx}），继续抓取工商信息…")
+                    break
+                if time.time() - last_progress_push >= 60:
+                    remaining = int(wait_deadline - time.time())
+                    state = blocked_reason2 or ("登录态失效" if blocked else "未知")
+                    fs_text(f"⏳ 仍在等待人工介入（剩余 {remaining}s），当前状态：{state}")
+                    last_progress_push = time.time()
+            if cleared:
+                login_ok = True
+                blocked_reason = ""
+            else:
+                fs_text("⏱️ 5 分钟内未检测到人工介入完成，回落为仅规则审核。")
                 try:
-                    t = page.locator(sel).first
-                    if t.count() and t.is_visible(timeout=1500):
-                        t.click(timeout=3000); time.sleep(3); break
+                    ctx.close()
                 except Exception:
-                    continue
-            time.sleep(2)
-            try:
-                page.screenshot(path=str(qr_png), full_page=True)
-                fs_image(qr_png, "请扫描二维码登录企查查（约 60 秒有效，过期会自动刷新）")
-            except Exception as e:
-                print(f"[qr screenshot err] {e}", flush=True)
-
-            t0 = time.time()
-            last_push = time.time()
-            last_qr_size = qr_png.stat().st_size if qr_png.exists() else 0
-            while time.time() - t0 < args.login_timeout:
-                # Re-attempt search every 10s — if it works, we're logged in
-                if int(time.time() - t0) % 12 == 0:
-                    visible_text, blocked = try_search()
-                    if not blocked and visible_text and not qd.detect_blocked_reason(visible_text):
-                        login_ok = True
-                        fs_text("✅ 登录成功（搜索校验通过）")
-                        break
-                    # Go back to login page so user can scan again
-                    try:
-                        page.goto(QCC_HOME, wait_until="domcontentloaded", timeout=30000); time.sleep(2)
-                        for sel in ["text=登录", "a:has-text('登录')", ".login"]:
-                            try:
-                                t = page.locator(sel).first
-                                if t.count() and t.is_visible(timeout=1500):
-                                    t.click(timeout=3000); break
-                            except Exception:
-                                continue
-                        time.sleep(3)
-                    except Exception:
-                        pass
-
-                try:
-                    text = page.evaluate("() => document.body.innerText || ''")
-                except Exception as e:
-                    fs_text(f"[fatal] 浏览器异常: {e}"); break
-                expired = any(m in text for m in ["二维码已失效", "二维码失效", "二维码已过期", "点击刷新", "刷新二维码"])
-                if expired or (time.time() - last_push > 50):
-                    if expired:
-                        for sel in ["text=点击刷新", "text=刷新二维码", ".login-qr-refresh"]:
-                            try:
-                                loc = page.locator(sel).first
-                                if loc.count() and loc.is_visible(timeout=1500):
-                                    loc.click(timeout=2000); break
-                            except Exception:
-                                continue
-                        time.sleep(3)
-                    try:
-                        page.screenshot(path=str(qr_png), full_page=True)
-                        new_size = qr_png.stat().st_size
-                        if abs(new_size - last_qr_size) > 500 or expired:
-                            fs_image(qr_png, "🔄 二维码已刷新" if expired else "（最新二维码）")
-                            last_qr_size = new_size
-                        last_push = time.time()
-                    except Exception:
-                        pass
-                time.sleep(2)
-            if not login_ok:
-                fs_text("⏱️ 登录超时")
-                ctx.close(); sys.exit(3)
-            # Re-run search after fresh login
-            visible_text, blocked = try_search()
-            if blocked:
-                fs_text("[失败] 登录后搜索仍被拦截"); ctx.close(); sys.exit(4)
+                    pass
+                stub_draft = {
+                    "company_name": company,
+                    "source": "skipped_qcc_manual_timeout",
+                    "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S+0800"),
+                    "fields": {"name": "", "extraction_mode": "skipped_qcc_manual_timeout"},
+                    "party_a": {"name": ""},
+                    "extraction_mode": "skipped_qcc_manual_timeout",
+                }
+                draft_json.write_text(json.dumps(stub_draft, ensure_ascii=False, indent=2), encoding="utf-8")
+                _run_review_and_deliver(contract, company, draft_json, stamp)
+                return
 
         # ============ Phase 2: search + extract ============
         fs_text(f"步骤 2/4: 抓取「{company}」工商信息...")
@@ -404,7 +565,7 @@ def main():
             text_txt.write_text(visible_text, encoding="utf-8")
             blocked_reason = qd.detect_blocked_reason(visible_text)
             if blocked_reason:
-                fs_text(f"[警告] {blocked_reason}")
+                fs_text("⚠️ 企查查页面存在访问限制提示，抓取到的信息可能不完整。")
             # Use the demo's full pipeline (build_company_check_draft) which combines:
             # - extract_company_registry_fields (legacy card parser)
             # - first_labeled_match fallbacks for company_type / business_scope / etc.
@@ -448,9 +609,24 @@ def main():
             fs_text(f"✅ 抓取到 {len(fields)} 字段:\n{summary}")
             fs_image(result_png, "（搜索结果截图）")
         except Exception as e:
-            fs_text(f"[err] 抓取失败: {e}")
+            fs_text(f"⚠️ 企查查信息抓取失败，跳过工商核验，仅做规则审核。")
+            print(f"[extract err] {e}", flush=True)
             traceback.print_exc()
-            ctx.close(); sys.exit(5)
+            try:
+                ctx.close()
+            except Exception:
+                pass
+            stub_draft = {
+                "company_name": company,
+                "source": "skipped_qcc_extract_failed",
+                "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S+0800"),
+                "fields": {"name": "", "extraction_mode": "skipped_qcc_extract_failed"},
+                "party_a": {"name": ""},
+                "extraction_mode": "skipped_qcc_extract_failed",
+            }
+            draft_json.write_text(json.dumps(stub_draft, ensure_ascii=False, indent=2), encoding="utf-8")
+            _run_review_and_deliver(contract, company, draft_json, stamp)
+            return
 
         try:
             ctx.close()
@@ -474,12 +650,12 @@ def _run_review_and_deliver(contract: Path, company: str, draft_json: Path, stam
         tail = (res.stdout + res.stderr).splitlines()[-15:]
         print("\n".join(tail), flush=True)
     except subprocess.TimeoutExpired:
-        fs_text("[err] 审核超时")
+        fs_text("⚠️ 审核引擎处理超时，请稍后重试或联系技术支持。")
         sys.exit(6)
 
     md = next(out_dir.glob("contract_review.md"), None)
     if not md:
-        fs_text("[err] 审核未产出 md")
+        fs_text("⚠️ 审核引擎未能生成报告，请重新发送合同文件重试。")
         sys.exit(7)
 
     md_text = md.read_text(encoding="utf-8")
@@ -505,11 +681,37 @@ def _run_review_and_deliver(contract: Path, company: str, draft_json: Path, stam
         from scripts.contract_extractor import extract_contract
         loaded = load_contract(contract)
         rule_ext = extract_contract(loaded)
+        # Reuse template_match already produced by run_contract_review.py
+        # (extract_contract itself does NOT call template_matcher).
+        if not rule_ext.get("template_match"):
+            try:
+                _findings = sorted(out_dir.glob("contract_findings_*.json"),
+                                   key=lambda x: x.stat().st_mtime, reverse=True)
+                if _findings:
+                    _fdata = json.loads(_findings[0].read_text(encoding="utf-8"))
+                    _tm = (_fdata.get("extracted") or {}).get("template_match") or _fdata.get("template_match")
+                    if _tm:
+                        rule_ext["template_match"] = _tm
+                        print(f"[template_match] merged from {_findings[0].name}: matched={_tm.get('matched')}", flush=True)
+            except Exception as _te:
+                print(f"[template_match merge warn] {_te}", flush=True)
         raw_text = "\n".join(b.get("text", "") for b in loaded.get("ordered_blocks", []))
-        llm_ext = llm_extract(raw_text)
+        # LLM extraction with a shorter timeout to avoid blocking the user
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(llm_extract, raw_text)
+            try:
+                llm_ext = future.result(timeout=200)
+            except concurrent.futures.TimeoutError:
+                print("[llm] LLM extraction timed out (200s), skipping", flush=True)
+                llm_ext = {}
         if llm_ext.get("_llm_error"):
             print(f"[llm warn] {llm_ext.get('_llm_error')}", flush=True)
             llm_ext = {}
+        try:
+            _merge_llm_into_rule(rule_ext, llm_ext)
+        except Exception as _me:
+            print(f"[llm merge warn] {_me}", flush=True)
     except Exception as e:
         print(f"[merge warn] {e}", flush=True)
         traceback.print_exc()
@@ -539,7 +741,14 @@ def _run_review_and_deliver(contract: Path, company: str, draft_json: Path, stam
 
     fs_file(admin_pdf, "pdf")
     print(f"[admin pdf] {admin_pdf}", flush=True)
-    fs_text("🎉 审核完成，已推送行政版报告")
+    # NOTE: Do NOT send a second confirmation text here. The openclaw-gateway
+    # agent will send its own "审核完成" reply after the script exits. Sending
+    # fs_text here caused duplicate report messages in Feishu.
+    print("🎉 审核完成，已推送行政版报告", flush=True)
+    try:
+        fs_text("✅ 审核完成，行政版PDF已推送。")
+    except Exception as _e:
+        print("[final fs_text warn] %s" % _e, flush=True)
 
 
 if __name__ == "__main__":

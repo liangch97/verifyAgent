@@ -305,7 +305,7 @@ def detect_template_match(
     *,
     contract_path: Path | None = None,
     templates_dir: Path | None = None,
-    match_threshold: float = 0.45,
+    match_threshold: float = 0.40,
 ) -> dict[str, Any]:
     """Detect whether `contract_text` is based on one of the school templates.
     Returns a structured report; `matched=False` when no template matched."""

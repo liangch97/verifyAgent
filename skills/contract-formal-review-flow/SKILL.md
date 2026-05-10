@@ -36,7 +36,8 @@ If the placeholder was not replaced, locate the folder that contains `run_contra
 4. **NEVER ASK CLARIFYING QUESTIONS.** A contract path + any review-intent phrase (审核, 帮我看, 看一下, 检查) is sufficient. **DO NOT ask for the user's name. DO NOT ask which review flow. DO NOT ask whether to use 企查查 or local-only mode. DO NOT ask whether the user wants a PDF or text.** Run the script immediately. The wrapper handles the QCC / no-QCC / Feishu / no-Feishu decision automatically.
 5. **NEVER announce intent without acting.** Phrases like "好，我先读合同，同时确认两件事" / "I'll review now after these questions" / "请告诉我您的称呼" / "请选择审核流程" are FORBIDDEN. The first action of every contract-review request must be the bash tool invocation. No preamble, no plan, no confirmation request.
 6. **If the contract path is not explicitly given but a file name appears**, locate it under `/root/contract-review-openclaw-portable/samples/` or ask once for the full path, then run the script.
-7. **If the inbound message contains an attached file (the prompt will include a system line like `[media attached: /root/.openclaw/media/inbound/<id>.docx (application/...)]` or the user message contains `<media:document>` / `<media:image>` placeholders), USE THAT EXACT PATH as `<contract_file_path>` and immediately run the script.** Recognize trigger phrases such as `审核这个`, `审核这份合同`, `看一下这个合同`, `帮我看看`, `这个合同有没有问题`, or even an attachment with no text — any attached `.docx` / `.pdf` / `.txt` file that appears to be a contract is itself a review request. Do NOT ask the user to retype the path; the path inside the `[media attached: ...]` line IS the file path. Quote the path with double quotes when invoking the command, since it may contain Chinese characters or spaces.
+7. **If the user sends a review-intent message (审核, 帮我看, 看一下, 检查, 帮我审核) but NO attachment and NO file path is present in the message**, the user is likely about to send the file in a follow-up message. In this case, reply ONLY with: `好，我等你发送文件。` and WAIT for the next message. Do NOT say "没有看到附件" / "未收到附件" / "请提供文件路径或重新发送附件" — these responses frustrate users who are still uploading. When the attachment arrives in the next message, immediately run the script with that file path.
+8. **If the inbound message contains an attached file (the prompt will include a system line like `[media attached: /root/.openclaw/media/inbound/<id>.docx (application/...)]` or the user message contains `<media:document>` / `<media:image>` placeholders), USE THAT EXACT PATH as `<contract_file_path>` and immediately run the script.** Recognize trigger phrases such as `审核这个`, `审核这份合同`, `看一下这个合同`, `帮我看看`, `这个合同有没有问题`, or even an attachment with no text — any attached `.docx` / `.pdf` / `.txt` file that appears to be a contract is itself a review request. Do NOT ask the user to retype the path; the path inside the `[media attached: ...]` line IS the file path. Quote the path with double quotes when invoking the command, since it may contain Chinese characters or spaces.
 
    Examples:
    - Inbound: `[media attached: /root/.openclaw/media/inbound/abc123.docx (application/vnd.openxmlformats-officedocument.wordprocessingml.document)]\n\n审核这个`
@@ -53,11 +54,15 @@ If the placeholder was not replaced, locate the folder that contains `run_contra
 | `先读起来了，稍后给您结果` | Announces intent without invoking the tool — FORBIDDEN |
 | `请告诉我合同的项目名称和金额` | Re-asks for info already in the file — FORBIDDEN |
 | `根据合同内容，我建议关注以下几点……` | Textual summary instead of PDF — FORBIDDEN |
+| Uploading/sending the PDF file via gateway after the script already pushed it | Causes duplicate file in Feishu — FORBIDDEN |
+| `未收到附件，请重新发送合同文件。` or any post-completion follow-up message | Script already succeeded; extra messages confuse the user — FORBIDDEN |
+| `没有看到附件，请提供文件路径或重新发送附件。` | User may still be uploading; say `好，我等你发送文件。` instead — FORBIDDEN |
 
 The ONE correct response when an attached contract arrives:
 1. Call the bash tool: `python3 /root/full_qcc_review.py "/root/.openclaw/media/inbound/<id>.docx"`
 2. Wait for the script to finish.
-3. Send exactly one short Feishu reply: `审核完成，行政版PDF已推送。`
+3. Send exactly one short Feishu reply: `审核完成，行政版PDF已推送。` Do NOT upload or send the PDF file yourself — the script already pushed it to Feishu. Sending it again causes duplicate file messages.
+4. **STOP COMPLETELY.** After sending the one-sentence confirmation, your turn is DONE. Do NOT send any additional messages. Do NOT re-evaluate the original user message. Do NOT say "未收到附件" or ask the user to resend. The task is finished — emit nothing further.
 
 ## ⚡ IM-Driven Mode (Feishu)
 

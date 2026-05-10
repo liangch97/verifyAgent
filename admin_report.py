@@ -56,9 +56,9 @@ def _safe_filename(name: str) -> str:
     # Try to keep the trailing -<uuid>.<ext>
     m = re.search(r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.([A-Za-z0-9]+)$", name)
     if m:
-        return f"(原始文件名编码异常) …{m.group(1)[-12:]}.{m.group(2)}"
+        return f"附件（原文件名编码异常已自动修复）…{m.group(1)[-12:]}.{m.group(2)}"
     suffix = name.rsplit(".", 1)[-1] if "." in name else "bin"
-    return f"(原始文件名编码异常).{suffix}"
+    return f"附件（原文件名编码异常已自动修复）.{suffix}"
 
 
 def _truncate(value: str, max_len: int = 600) -> str:
@@ -72,7 +72,7 @@ def _truncate(value: str, max_len: int = 600) -> str:
     return s[: max_len - 1].rstrip() + "…"
 
 
-def merged_basic_info(rule: dict, llm: dict, contract_path: Path) -> dict[str, str]:
+def merged_basic_info(rule: dict, llm: dict, contract_path: Path, company_check: dict | None = None) -> dict[str, str]:
     """Merge rule+llm, prefer the more accurate value."""
     r_pa = rule.get("party_a") or {}
     r_pb = rule.get("party_b") or {}
@@ -97,21 +97,38 @@ def merged_basic_info(rule: dict, llm: dict, contract_path: Path) -> dict[str, s
     if amount and amount.replace(".", "", 1).isdigit():
         amount = f"人民币 {float(amount):,.2f} 元"
 
+    # QCC fields fallback (only if rule+llm gave nothing)
+    cc_fields = (company_check or {}).get("fields") or {}
+    cc_pa = (company_check or {}).get("party_a") or {}
+    def _qf(*keys):
+        for k in keys:
+            v = cc_fields.get(k) or cc_pa.get(k)
+            if v: return str(v).strip()
+        return ""
+    pa_credit = _pick(r_pa.get("credit_code"), l_pa.get("credit_code")) or _qf("credit_code", "统一社会信用代码") or "—"
+    pa_addr = _pick(r_pa.get("address"), l_pa.get("address")) or _qf("registered_address", "address", "注册地址", "住所") or "—"
+    pa_legal = _pick(r_pa.get("legal_rep"), l_pa.get("legal_rep")) or _qf("legal_rep", "法定代表人") or "—"
+
     return {
         "标题": title,
-        "合同编号": _pick(rule.get("contract_no"), llm.get("contract_no")),
-        "合同类型": _pick(rule.get("contract_type"), llm.get("contract_type")),
+        "合同编号": _pick(rule.get("contract_no"), llm.get("contract_no")) or "—",
+        "合同类型": _pick(rule.get("contract_type"), llm.get("contract_type")) or "—",
         "项目名称": _pick(rule.get("project_name"), llm.get("project_name")) or "（未识别）",
         "甲方名称": _pick(r_pa.get("name"), l_pa.get("name")),
-        "甲方信用代码": _pick(r_pa.get("credit_code"), l_pa.get("credit_code")) or "—",
-        "甲方地址": _pick(r_pa.get("address"), l_pa.get("address")) or "—",
-        "甲方法定代表人": _pick(r_pa.get("legal_rep"), l_pa.get("legal_rep")) or "—",
+        "甲方信用代码": pa_credit,
+        "甲方地址": pa_addr,
+        "甲方法定代表人": pa_legal,
         "乙方名称": _pick(r_pb.get("name"), l_pb.get("name")),
         "乙方地址": _pick(r_pb.get("address"), l_pb.get("address")) or "—",
         "签署日期": _pick(llm.get("sign_date"), rule.get("sign_date")) or "—",
-        "履行起止": _pick(
-            f"{llm.get('perform_start','')} 至 {llm.get('perform_end','')}".strip(" 至 ")
-        ) or "—",
+        "履行起止": (lambda ps, pe: (
+            f"{ps} 至 {pe}" if (ps or pe) else "—"
+        ))(
+            (str(llm.get("perform_start") or "").strip()
+             or str(((rule.get("dates") if isinstance(rule.get("dates"), dict) else {}).get("perform_start")) or "").strip()),
+            (str(llm.get("perform_end") or "").strip()
+             or str(((rule.get("dates") if isinstance(rule.get("dates"), dict) else {}).get("perform_end")) or "").strip()),
+        ),
         "合同金额": amount or "—",
         "源文件": _safe_filename(contract_path.name),
     }
@@ -287,9 +304,15 @@ def _render_template_section(rule_extracted: dict) -> str:
     counts = tm.get("counts") or {}
     modified_n = tm.get("modified_count") or 0
     summary = tm.get("summary") or ""
+    import os as _os
+    _hide_unchanged = _os.environ.get("ADMIN_PDF_HIDE_UNCHANGED", "1") not in ("0", "false", "False", "")
     rows = []
+    _hidden = 0
     for idx, c in enumerate(tm.get("clauses") or [], start=1):
         status = c.get("status", "")
+        if _hide_unchanged and status == "unchanged":
+            _hidden += 1
+            continue
         label = _TEMPLATE_STATUS_LABEL.get(status, status)
         ratio = c.get("diff_ratio")
         ratio_txt = f"{ratio:.0%}" if isinstance(ratio, (int, float)) else "-"
@@ -303,11 +326,12 @@ def _render_template_section(rule_extracted: dict) -> str:
         ])
     badge_class = "warn" if modified_n else "info"
     badge_text = f"{modified_n} 处修改" if modified_n else "条款未改动"
+    _hidden_note = f"（已折叠 {_hidden} 条未改动条款，如需完整对照请设置 ADMIN_PDF_HIDE_UNCHANGED=0）" if (_hide_unchanged and _hidden) else ""
     header = (
         f"<p class='hint'>识别为学校范本：<b>{_h(name)}</b>（整体相似度 {sim:.0%}）。"
         f"未改动 {counts.get('unchanged', 0)} / 修改 {counts.get('modified', 0)} / "
         f"改写 {counts.get('rewritten', 0)} / 缺失 {counts.get('removed', 0)} / "
-        f"新增 {counts.get('added', 0)}。{_h(summary)}</p>"
+        f"新增 {counts.get('added', 0)}。{_h(summary)}{_hidden_note}</p>"
     )
     return (
         "<section>"
@@ -335,7 +359,7 @@ def render_admin_pdf(
     """Generate the admin-friendly PDF."""
     from weasyprint import HTML, CSS
 
-    merged = merged_basic_info(rule_extracted, llm_extracted, contract_path)
+    merged = merged_basic_info(rule_extracted, llm_extracted, contract_path, company_check)
     decision, confidence, summary = _parse_decision(md_text)
     qcc_rows = qcc_compare_rows(merged, company_check)
 
@@ -361,6 +385,11 @@ def render_admin_pdf(
         ] for it in items]
 
     qcc_table_rows = [[r["项目"], _truncate(r["合同声称"], 200), _truncate(r["工商抓取"], 200), r["结论"]] for r in qcc_rows]
+
+    # P0-3: 当 QCC 比对全部一致/部分一致/合同未声明时，过滤"甲方工商信息外部核验"manual_item
+    qcc_has_conflict = any(r["结论"].startswith("不一致") for r in qcc_rows)
+    if not qcc_has_conflict:
+        manual_items = [it for it in manual_items if "甲方工商信息外部核验" not in (it.get("事项") or "")]
 
     template_section_html = _render_template_section(rule_extracted)
 
