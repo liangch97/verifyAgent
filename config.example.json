@@ -1,0 +1,6 @@
+{
+  "APP_ID": "cli_xxx",
+  "APP_SECRET": "xxx",
+  "USER_OPEN_ID": "ou_xxx",
+  "OPENCLAW_PORTABLE_DIR": "/root/contract-review-openclaw-portable"
+}
